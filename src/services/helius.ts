@@ -1,6 +1,5 @@
 import { decodeTxData } from '../utils/decoder/index.js';
 import { helius } from '../config/index.js';
-import { serializedBigInt } from '@/utils/decoder/index.js';
 
 export const getAccountInfo = async (address: string) => {
     const account = await helius.getAccountInfo(address, {
@@ -14,10 +13,16 @@ export const getBlock = async (address: string) => {
     return account;
 };
 
-export const getSignaturesForAddress = async (address: string, limit: number) => {
+export const getSignaturesForAddress = async (address: string, limit: number, before?: string) => {
+    const config: any = { limit };
+
+    if (before) {
+        config.before = before;
+    }
+
     const signatures = await helius.getSignaturesForAddress(
         address,
-        { limit }
+        config
     );
     return signatures;
 };
@@ -37,9 +42,18 @@ export const getBalanceForAddress = async (address: string) => {
     return balance;
 };
 
-export const getTransactionsForAddress = async (address: string, limit: number) => {
+export const getTransactionsForAddress = async (address: string, limit: number, before?: string) => {
     const transactions: any[] = [];
-    const signatures = await getSignaturesForAddress(address, limit);
+    const config: any = { limit };
+
+    if (before) {
+        config.before = before;
+    }
+
+    const signatures = await helius.getSignaturesForAddress(
+        address,
+        config
+    );
 
     for (let i = 0; i < signatures.length; i++) {
         const signature = signatures[i];
@@ -56,7 +70,13 @@ export const getTransactionsForAddress = async (address: string, limit: number) 
             await new Promise(resolve => setTimeout(resolve, 100));
         }
     }
-    return transactions;
+
+    // Return transactions with pagination metadata
+    return {
+        transactions,
+        signatures: signatures.map(s => s.signature),
+        hasMore: signatures.length === limit
+    };
 };
 
 export const getTransactionBySignature = async (signature: string) => {
