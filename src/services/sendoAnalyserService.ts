@@ -50,13 +50,17 @@ export class SendoAnalyserService extends Service {
    * Get trades for a wallet address with price analysis
    * @param address - Solana wallet address
    * @param limit - Number of transactions to fetch (default: 5)
-   * @returns Array of trades with price analysis
+   * @param cursor - Cursor for pagination (optional)
+   * @returns Object with trades array and pagination metadata
    */
-  async getTradesForAddress(address: string, limit: number = 5): Promise<any[]> {
+  async getTradesForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching trades for address: ${address}`);
 
-      const transactions = await getTransactionsForAddress(address, limit);
+      const result = await getTransactionsForAddress(address, limit, cursor);
+      const transactions = result.transactions;
+      const signatures = result.signatures;
+      const hasMore = result.hasMore;
       const parsedTransactionsArray: any[] = [];
 
       for (const transaction of transactions) {
@@ -126,7 +130,18 @@ export class SendoAnalyserService extends Service {
         }
       }
 
-      return serializedBigInt(parsedTransactionsArray);
+      const pagination = {
+        limit: limit,
+        hasMore: hasMore,
+        nextCursor: signatures.length > 0 ? signatures[signatures.length - 1] : null,
+        currentCursor: cursor || null,
+        totalLoaded: parsedTransactionsArray.length
+      };
+
+      return {
+        trades: serializedBigInt(parsedTransactionsArray),
+        pagination
+      };
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting trades:', error?.message || error);
       throw error;
@@ -137,13 +152,26 @@ export class SendoAnalyserService extends Service {
    * Get signatures for a wallet address
    * @param address - Solana wallet address
    * @param limit - Number of signatures to fetch (default: 5)
-   * @returns Array of transaction signatures
+   * @param cursor - Cursor for pagination (optional)
+   * @returns Object with signatures array and pagination metadata
    */
-  async getSignaturesForAddress(address: string, limit: number = 5): Promise<any[]> {
+  async getSignaturesForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching signatures for address: ${address}`);
-      const signatures = await getSignaturesForAddress(address, limit);
-      return serializedBigInt(signatures);
+      const signatures = await getSignaturesForAddress(address, limit, cursor);
+
+      const pagination = {
+        limit: limit,
+        hasMore: signatures.length === limit,
+        nextCursor: signatures.length > 0 ? signatures[signatures.length - 1].signature : null,
+        currentCursor: cursor || null,
+        totalLoaded: signatures.length
+      };
+
+      return {
+        signatures: serializedBigInt(signatures),
+        pagination
+      };
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting signatures:', error?.message || error);
       throw error;
@@ -154,13 +182,17 @@ export class SendoAnalyserService extends Service {
    * Get transactions for a wallet address (decoded)
    * @param address - Solana wallet address
    * @param limit - Number of transactions to fetch (default: 5)
-   * @returns Array of decoded transactions
+   * @param cursor - Cursor for pagination (optional)
+   * @returns Object with transactions array and pagination metadata
    */
-  async getTransactionsForAddress(address: string, limit: number = 5): Promise<any[]> {
+  async getTransactionsForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching transactions for address: ${address}`);
 
-      const transactions = await getTransactionsForAddress(address, limit);
+      const result = await getTransactionsForAddress(address, limit, cursor);
+      const transactions = result.transactions;
+      const signatures = result.signatures;
+      const hasMore = result.hasMore;
       const parsedTransactionsArray: any[] = [];
 
       for (const transaction of transactions) {
@@ -168,7 +200,18 @@ export class SendoAnalyserService extends Service {
         parsedTransactionsArray.push(tx);
       }
 
-      return serializedBigInt(parsedTransactionsArray);
+      const pagination = {
+        limit: limit,
+        hasMore: hasMore,
+        nextCursor: signatures.length > 0 ? signatures[signatures.length - 1] : null,
+        currentCursor: cursor || null,
+        totalLoaded: parsedTransactionsArray.length
+      };
+
+      return {
+        transactions: serializedBigInt(parsedTransactionsArray),
+        pagination
+      };
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting transactions:', error?.message || error);
       throw error;

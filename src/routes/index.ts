@@ -21,7 +21,7 @@ function sendError(res: any, status: number, code: string, message: string, deta
 // ============================================
 
 /**
- * GET /trades/:address?limit=5
+ * GET /trades/:address?limit=5&cursor=signature
  * Get trades for a wallet address with price analysis
  */
 async function getTradesHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
@@ -48,9 +48,12 @@ async function getTradesHandler(req: any, res: any, runtime: IAgentRuntime): Pro
     limit = Math.min(parsedLimit, 50); // max 50
   }
 
+  // Parse cursor from query params
+  const cursor = req.query?.cursor as string | undefined;
+
   try {
-    const trades = await analyserService.getTradesForAddress(address, limit);
-    sendSuccess(res, { address, trades, count: trades.length });
+    const result = await analyserService.getTradesForAddress(address, limit, cursor);
+    sendSuccess(res, { address, ...result });
   } catch (error: any) {
     logger.error('[Route] Failed to get trades:', error);
     sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get trades', error.message);
@@ -58,7 +61,7 @@ async function getTradesHandler(req: any, res: any, runtime: IAgentRuntime): Pro
 }
 
 /**
- * GET /signatures/:address?limit=5
+ * GET /signatures/:address?limit=5&cursor=signature
  * Get transaction signatures for a wallet address
  */
 async function getSignaturesHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
@@ -85,9 +88,12 @@ async function getSignaturesHandler(req: any, res: any, runtime: IAgentRuntime):
     limit = Math.min(parsedLimit, 50); // max 50
   }
 
+  // Parse cursor from query params
+  const cursor = req.query?.cursor as string | undefined;
+
   try {
-    const signatures = await analyserService.getSignaturesForAddress(address, limit);
-    sendSuccess(res, { address, signatures, count: signatures.length });
+    const result = await analyserService.getSignaturesForAddress(address, limit, cursor);
+    sendSuccess(res, { address, ...result });
   } catch (error: any) {
     logger.error('[Route] Failed to get signatures:', error);
     sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get signatures', error.message);
@@ -95,7 +101,7 @@ async function getSignaturesHandler(req: any, res: any, runtime: IAgentRuntime):
 }
 
 /**
- * GET /transactions/:address?limit=5
+ * GET /transactions/:address?limit=5&cursor=signature
  * Get decoded transactions for a wallet address
  */
 async function getTransactionsHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
@@ -122,9 +128,12 @@ async function getTransactionsHandler(req: any, res: any, runtime: IAgentRuntime
     limit = Math.min(parsedLimit, 50); // max 50
   }
 
+  // Parse cursor from query params
+  const cursor = req.query?.cursor as string | undefined;
+
   try {
-    const transactions = await analyserService.getTransactionsForAddress(address, limit);
-    sendSuccess(res, { address, transactions, count: transactions.length });
+    const result = await analyserService.getTransactionsForAddress(address, limit, cursor);
+    sendSuccess(res, { address, ...result });
   } catch (error: any) {
     logger.error('[Route] Failed to get transactions:', error);
     sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get transactions', error.message);
