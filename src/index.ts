@@ -1,4 +1,4 @@
-import type { Plugin } from '@elizaos/core';
+import { Plugin, logger } from '@elizaos/core';
 import { SendoAnalyserService } from './services/sendoAnalyserService.js';
 import { sendoAnalyserRoutes } from './routes/index.js';
 import * as schema from './schemas/index.js';
@@ -37,16 +37,31 @@ export { SendoAnalyserService };
  * - Orca (Fair-price AMM)
  * - Meteora (Dynamic DLMM)
  * - Whirlpool (Concentrated Liquidity)
+ *
+ * **Required Environment Variables**:
+ * - `HELIUS_API_KEY`: Required - Helius API key for Solana blockchain data
+ * - `BIRDEYE_API_KEY`: Optional - Birdeye API key for token price data
+ * - `BIRDEYE_RATE_LIMIT`: Optional - Rate limit for Birdeye API (requests per second, default: 1)
  */
 export const sendoAnalyserPlugin: Plugin = {
   name: 'plugin-sendo-analyser',
   description: 'Sendo Analyser provides comprehensive Solana wallet analysis, transaction decoding, and blockchain insights with multi-protocol support',
 
+  actions: [],
+  providers: [],
+  evaluators: [],
   services: [SendoAnalyserService],
   routes: sendoAnalyserRoutes,
 
   // Export schema for automatic database migrations
   schema,
+
+  init: async (_config: Record<string, string>): Promise<void> => {
+    logger.info('Initializing Sendo Analyser plugin');
+    // Note: API key validation is done in the Service constructor via runtime.getSetting()
+    // The init function doesn't have access to character secrets, only process.env
+    logger.info('Sendo Analyser plugin initialized successfully');
+  },
 };
 
 export default sendoAnalyserPlugin;
