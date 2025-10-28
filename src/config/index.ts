@@ -1,15 +1,49 @@
-import { createHelius } from "helius-sdk";
-import dotenv from "dotenv";
+import type { IAgentRuntime } from '@elizaos/core';
 
-dotenv.config();
-
-const apiKey = process.env.HELIUS_API_KEY;
-if (!apiKey) {
-  throw new Error("HELIUS_API_KEY is not set");
+/**
+ * Configuration interface for Sendo Analyser plugin
+ */
+export interface SendoAnalyserConfig {
+  heliusApiKey: string;
+  birdeyeApiKey?: string;
+  birdeyeRateLimit?: number; // requests per second
 }
 
-export const helius = createHelius({ apiKey, network: "mainnet" });
+/**
+ * Default configuration values
+ */
+export const SENDO_ANALYSER_DEFAULTS = {
+  BIRDEYE_RATE_LIMIT: 1, // 1 request per second by default
+  BIRDEYE_API_BASE: 'https://public-api.birdeye.so/defi',
+  HELIUS_NETWORK: 'mainnet' as const,
+};
 
+/**
+ * Extracts Sendo Analyser configuration from runtime settings
+ * @param runtime - ElizaOS agent runtime instance
+ * @returns Sendo Analyser service configuration or null if required keys are missing
+ */
+export function getSendoAnalyserConfig(runtime: IAgentRuntime): SendoAnalyserConfig | null {
+  const heliusApiKey = runtime.getSetting('HELIUS_API_KEY') as string;
+
+  if (!heliusApiKey || heliusApiKey.trim() === '') {
+    console.error('[ERROR getSendoAnalyserConfig] HELIUS_API_KEY is empty or null');
+    return null;
+  }
+
+  const birdeyeApiKey = runtime.getSetting('BIRDEYE_API_KEY') as string;
+  const birdeyeRateLimit = parseInt(runtime.getSetting('BIRDEYE_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT));
+
+  return {
+    heliusApiKey,
+    birdeyeApiKey: birdeyeApiKey || undefined,
+    birdeyeRateLimit: birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT,
+  };
+}
+
+/**
+ * Solana program addresses mapping
+ */
 export const programs = {
   // System Programs
   '11111111111111111111111111111111': 'System',
@@ -45,5 +79,4 @@ export const programs = {
   'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': 'Whirlpool V2',
   // Orca
   'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE': 'Orca V2',
-  
-}
+};

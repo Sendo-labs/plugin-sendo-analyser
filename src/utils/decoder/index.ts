@@ -7,7 +7,7 @@ import { meteoraDecoder } from "./meteora/index.js";
 import { orcaDecoder } from "./orca/index.js";
 import { whirlpoolDecoder } from "./whirlpool/index.js";
 import { raydiumDecoder } from "./raydium/index.js";
-import { getAccountInfo } from "../../services/helius.js";
+import { getGlobalHeliusService } from "../../services/api/index.js";
 import { poolKeysSchema } from "./pumpswap/schema.js";
 import { poolLayoutSchema } from "./meteora/schema.js";
 import { raydiumPoolSchema } from "./raydium/schema.js";
@@ -90,10 +90,11 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
         };
     }
 
-    // 🪙 Raydium 
+    // 🪙 Raydium
     // !!! Pas de token amount correct
     if (programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8" && decoded.amountIn && decoded.minimumAmountOut) {
-        const accountInfo = await getAccountInfo(tx.transaction.message.accountKeys[2]);
+        const heliusService = getGlobalHeliusService();
+        const accountInfo = await heliusService.getAccountInfo(tx.transaction.message.accountKeys[2]);
         if (!accountInfo.value) {
             return null;
         }
@@ -114,7 +115,8 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
 
     // 🪙 Pumpfun AMM
     if (programId === "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA" && (decoded.baseAmountOut || decoded.baseAmountIn) && (decoded.maxQuoteAmountIn || decoded.minQuoteAmountOut)) {
-        const accountInfo = await getAccountInfo(decoded.pool);
+        const heliusService = getGlobalHeliusService();
+        const accountInfo = await heliusService.getAccountInfo(decoded.pool);
         if (!accountInfo.value) {
             return null;
         }
@@ -148,7 +150,8 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
 
     // 🪙 Meteora (DLMM)
     if (programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG" && decoded.params?.amountIn && decoded.pool && decoded.swapResult?.outputAmount) {
-        const accountInfo = await getAccountInfo(decoded.pool);
+        const heliusService = getGlobalHeliusService();
+        const accountInfo = await heliusService.getAccountInfo(decoded.pool);
         if (!accountInfo.value) {
             return null;
         }

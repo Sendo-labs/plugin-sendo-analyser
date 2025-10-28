@@ -3,16 +3,46 @@ import {
   IAgentRuntime,
   logger,
 } from '@elizaos/core';
-import { getTransactionsForAddress, getTokensForAddress, getNftsForAddress, getBalanceForAddress, getSignaturesForAddress } from './helius.js';
+import { createHeliusService, getBirdeyeService, setGlobalHeliusService, setGlobalBirdeyeService } from './api/index.js';
 import { decodeTxData, serializedBigInt } from '../utils/decoder/index.js';
-import { getPriceAnalysis } from './birdeyes.js';
 import { getSignerTrades } from '../utils/decoder/extractBalances.js';
+import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConfig } from '../config/index.js';
+import type { HeliusService } from './api/helius.js';
+import type { BirdeyeService } from './api/birdeyes.js';
+
+export const SENDO_ANALYSER_SERVICE_NAME = 'sendo_analyser';
 
 export class SendoAnalyserService extends Service {
-  static serviceType = 'sendo_analyser';
+  static serviceType = SENDO_ANALYSER_SERVICE_NAME;
+  private serviceConfig: SendoAnalyserConfig;
+  private heliusService: HeliusService;
+  private birdeyeService: BirdeyeService;
 
   get capabilityDescription(): string {
     return 'Sendo Analyser service that provides Solana wallet analysis, trades, tokens, NFTs, and transactions decoding';
+  }
+
+  constructor(runtime: IAgentRuntime) {
+    super(runtime);
+
+    const config = getSendoAnalyserConfig(runtime);
+
+    if (!config) {
+      throw new Error('HELIUS_API_KEY is required in environment variables');
+    }
+
+    this.serviceConfig = config;
+    this.heliusService = createHeliusService(config.heliusApiKey);
+    this.birdeyeService = getBirdeyeService(
+      config.birdeyeApiKey,
+      config.birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT
+    );
+
+    // Set global services for use in decoders and utilities
+    setGlobalHeliusService(this.heliusService);
+    setGlobalBirdeyeService(this.birdeyeService);
+
+    logger.info(`Sendo Analyser service initialized with Helius network: ${SENDO_ANALYSER_DEFAULTS.HELIUS_NETWORK}`);
   }
 
   async initialize(runtime: IAgentRuntime): Promise<void> {
@@ -26,9 +56,14 @@ export class SendoAnalyserService extends Service {
   }
 
   static async start(runtime: IAgentRuntime): Promise<SendoAnalyserService> {
+    logger.info('Starting Sendo Analyser service');
     const service = new SendoAnalyserService(runtime);
     await service.initialize(runtime);
     return service;
+  }
+
+  static async stop(_runtime: IAgentRuntime): Promise<void> {
+    logger.info('Stopping Sendo Analyser service');
   }
 
   /**
@@ -40,6 +75,46 @@ export class SendoAnalyserService extends Service {
       throw new Error('Database not available in runtime');
     }
     return db;
+  }
+
+  // ============================================
+  // PRIVATE HELPER METHODS FOR API CALLS
+  // ============================================
+
+  /**
+   * Internal method to get transactions data from Helius
+   */
+  private async getTransactionsData(address: string, limit: number, before?: string): Promise<any> {
+    const transactions: any[] = [];
+    const config: any = { limit };
+
+    if (before) {
+      config.before = before;
+    }
+
+    const signatures = await this.heliusService.getSignaturesForAddress(address, config);
+
+    for (let i = 0; i < signatures.length; i++) {
+      const signature = signatures[i];
+      const transaction = await this.heliusService.getTransaction(signature.signature, {
+        maxSupportedTransactionVersion: 0
+      });
+
+      if (transaction) {
+        transactions.push(transaction);
+      }
+
+      // Add delay between requests (except for the last one)
+      if (i < signatures.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    return {
+      transactions,
+      signatures: signatures.map(s => s.signature),
+      hasMore: signatures.length === limit
+    };
   }
 
   // ============================================
@@ -57,7 +132,7 @@ export class SendoAnalyserService extends Service {
     try {
       logger.info(`[SendoAnalyserService] Fetching trades for address: ${address}`);
 
-      const result = await getTransactionsForAddress(address, limit, cursor);
+      const result = await this.getTransactionsData(address, limit, cursor);
       const transactions = result.transactions;
       const signatures = result.signatures;
       const hasMore = result.hasMore;
@@ -77,7 +152,7 @@ export class SendoAnalyserService extends Service {
             for (const tokenTrade of signerTrades) {
               try {
                 logger.debug(`Analyzing price for token: ${tokenTrade.mint} (${tokenTrade.changeType})`);
-                const priceAnalysis = await getPriceAnalysis(tokenTrade.mint, tx.blockTime);
+                const priceAnalysis = await this.birdeyeService.getPriceAnalysis(tokenTrade.mint, tx.blockTime);
 
                 if (priceAnalysis) {
                   trades.push({
@@ -158,7 +233,11 @@ export class SendoAnalyserService extends Service {
   async getSignaturesForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching signatures for address: ${address}`);
-      const signatures = await getSignaturesForAddress(address, limit, cursor);
+      const config: any = { limit };
+      if (cursor) {
+        config.before = cursor;
+      }
+      const signatures = await this.heliusService.getSignaturesForAddress(address, config);
 
       const pagination = {
         limit: limit,
@@ -189,7 +268,7 @@ export class SendoAnalyserService extends Service {
     try {
       logger.info(`[SendoAnalyserService] Fetching transactions for address: ${address}`);
 
-      const result = await getTransactionsForAddress(address, limit, cursor);
+      const result = await this.getTransactionsData(address, limit, cursor);
       const transactions = result.transactions;
       const signatures = result.signatures;
       const hasMore = result.hasMore;
@@ -226,7 +305,7 @@ export class SendoAnalyserService extends Service {
   async getTokensForAddress(address: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching tokens for address: ${address}`);
-      const tokens = await getTokensForAddress(address);
+      const tokens = await this.heliusService.getTokenAccounts({ owner: address });
       return serializedBigInt(tokens);
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting tokens:', error?.message || error);
@@ -242,7 +321,7 @@ export class SendoAnalyserService extends Service {
   async getNftsForAddress(address: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching NFTs for address: ${address}`);
-      const nfts = await getNftsForAddress(address);
+      const nfts = await this.heliusService.getAssetsByOwner({ ownerAddress: address });
       return serializedBigInt(nfts);
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting NFTs:', error?.message || error);
@@ -258,7 +337,7 @@ export class SendoAnalyserService extends Service {
   async getGlobalForAddress(address: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching global info for address: ${address}`);
-      const balance = await getBalanceForAddress(address);
+      const balance = await this.heliusService.getBalance(address);
       return {
         balance: serializedBigInt(balance)
       };
