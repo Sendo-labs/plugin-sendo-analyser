@@ -50,7 +50,11 @@ export interface BirdeyeService {
  * @returns BirdeyeService instance
  */
 export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1): BirdeyeService {
-  const birdEyeLimiter = new RateLimiter({ requestsPerSecond });
+  const birdEyeLimiter = new RateLimiter({
+    requestsPerSecond,
+    burstCapacity: 50,
+    adaptiveTiming: true
+  });
   const BIRDEYE_API_BASE = SENDO_ANALYSER_DEFAULTS.BIRDEYE_API_BASE;
 
   /**
@@ -78,7 +82,7 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
             'x-chain': 'solana',
             ...(apiKey && { 'X-API-KEY': apiKey })
           },
-          timeout: 15000
+          timeout: 5000
         });
 
         if (response.data.success && response.data.data.items) {
@@ -138,7 +142,8 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
   ) => {
     const now = Math.floor(Date.now() / 1000);
 
-    const priceHistory = await getFullHistoricalPrices(mint, purchaseTimestamp, now, '30m');
+    // Use 1H timeframe for balanced performance and data
+    const priceHistory = await getFullHistoricalPrices(mint, purchaseTimestamp, now, '1H');
 
     if (!priceHistory.length) return null;
 
