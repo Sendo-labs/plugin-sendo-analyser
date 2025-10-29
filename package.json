@@ -1,7 +1,7 @@
 {
   "name": "@sendo-labs/plugin-sendo-analyser",
   "description": "Sendo Analyser plugin for ElizaOS - provides blockchain wallet analysis and insights using sendo-api",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
