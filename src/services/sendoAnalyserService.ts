@@ -5,7 +5,7 @@ import {
 } from '@elizaos/core';
 import { createHeliusService, getBirdeyeService, setGlobalHeliusService, setGlobalBirdeyeService } from './api/index.js';
 import { decodeTxData, serializedBigInt } from '../utils/decoder/index.js';
-import { getSignerTrades } from '../utils/decoder/extractBalances.js';
+import { parseTransactionsWithPriceAnalysis, calculateGlobalSummary } from '../utils/parseTrade.js';
 import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConfig } from '../config/index.js';
 import type { HeliusService } from './api/helius.js';
 import type { BirdeyeService } from './api/birdeyes.js';
@@ -32,7 +32,10 @@ export class SendoAnalyserService extends Service {
     }
 
     this.serviceConfig = config;
-    this.heliusService = createHeliusService(config.heliusApiKey);
+    this.heliusService = createHeliusService(
+      config.heliusApiKey,
+      config.heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT
+    );
     this.birdeyeService = getBirdeyeService(
       config.birdeyeApiKey,
       config.birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT
@@ -122,100 +125,56 @@ export class SendoAnalyserService extends Service {
   // ============================================
 
   /**
-   * Get trades for a wallet address with price analysis
+   * Get trades for a wallet address with price analysis (OPTIMIZED)
+   * Uses parseTransactionsWithPriceAnalysis for better performance
    * @param address - Solana wallet address
-   * @param limit - Number of transactions to fetch (default: 5)
+   * @param limit - Number of transactions to fetch (default: 50)
    * @param cursor - Cursor for pagination (optional)
-   * @returns Object with trades array and pagination metadata
+   * @returns Object with trades array, summary, and pagination metadata
    */
-  async getTradesForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
+  async getTradesForAddress(address: string, limit: number = 50, cursor?: string): Promise<any> {
     try {
       logger.info(`[SendoAnalyserService] Fetching trades for address: ${address}`);
 
-      const result = await this.getTransactionsData(address, limit, cursor);
-      const transactions = result.transactions;
-      const signatures = result.signatures;
-      const hasMore = result.hasMore;
-      const parsedTransactionsArray: any[] = [];
+      // Fetch transactions from Helius
+      const result = await this.heliusService.getTransactionsForAddress(address, limit, cursor);
+      const { transactions, signatures, hasMore } = result;
 
-      for (const transaction of transactions) {
-        const tx = await decodeTxData(transaction);
+      // Fetch additional address data in parallel
+      const [nfts, tokens, balance] = await Promise.all([
+        this.heliusService.getAssetsByOwner({ ownerAddress: address }),
+        this.heliusService.getTokenAccounts({ owner: address }),
+        this.heliusService.getBalance(address)
+      ]);
 
-        if (tx.error === 'SUCCESS') {
-          // Detect all signer trades
-          const signerTrades = getSignerTrades(tx.balances);
+      // Parse transactions and analyze prices (optimized with caching and deduplication)
+      const parsedTransactionsArray = await parseTransactionsWithPriceAnalysis(transactions, this.birdeyeService);
 
-          if (signerTrades.length > 0) {
-            // Analyze price for each token trade
-            const trades: any[] = [];
+      // Calculate global summary
+      const globalSummary = calculateGlobalSummary(parsedTransactionsArray);
 
-            for (const tokenTrade of signerTrades) {
-              try {
-                logger.debug(`Analyzing price for token: ${tokenTrade.mint} (${tokenTrade.changeType})`);
-                const priceAnalysis = await this.birdeyeService.getPriceAnalysis(tokenTrade.mint, tx.blockTime);
-
-                if (priceAnalysis) {
-                  trades.push({
-                    mint: tokenTrade.mint,
-                    tokenBalance: tokenTrade,
-                    tradeType: tokenTrade.changeType,
-                    priceAnalysis: {
-                      purchasePrice: priceAnalysis.purchasePrice,
-                      currentPrice: priceAnalysis.currentPrice,
-                      athPrice: priceAnalysis.athPrice,
-                      athTimestamp: priceAnalysis.athTimestamp,
-                      priceHistoryPoints: priceAnalysis.priceHistory.length
-                    }
-                  });
-                } else {
-                  trades.push({
-                    mint: tokenTrade.mint,
-                    tokenBalance: tokenTrade,
-                    tradeType: tokenTrade.changeType,
-                    priceAnalysis: null
-                  });
-                }
-              } catch (error: any) {
-                logger.error(`Error analyzing price for ${tokenTrade.mint}:`, error?.message || error);
-                trades.push({
-                  mint: tokenTrade.mint,
-                  tokenBalance: tokenTrade,
-                  tradeType: tokenTrade.changeType,
-                  priceAnalysis: null
-                });
-              }
-            }
-
-            parsedTransactionsArray.push({
-              signature: tx.signature,
-              recentBlockhash: tx.recentBlockhash,
-              blockTime: tx.blockTime,
-              fee: tx.fee,
-              error: tx.error,
-              status: tx.status,
-              accounts: tx.accounts,
-              balances: {
-                signerAddress: tx.balances.signerAddress,
-                solBalance: tx.balances.signerSolBalance,
-                tokenBalances: tx.balances.signerTokenBalances,
-              },
-              trades: trades
-            });
-          }
-        }
-      }
-
+      // Build pagination info
       const pagination = {
         limit: limit,
         hasMore: hasMore,
         nextCursor: signatures.length > 0 ? signatures[signatures.length - 1] : null,
         currentCursor: cursor || null,
-        totalLoaded: parsedTransactionsArray.length
+        totalLoaded: transactions.length
       };
 
+      // Return response
       return {
+        message: 'Transactions retrieved successfully',
+        version: '1.0.0',
+        summary: globalSummary,
+        pagination: pagination,
+        global: {
+          signatureCount: signatures.length,
+          balance: serializedBigInt(balance),
+          nfts: nfts,
+          tokens: tokens,
+        },
         trades: serializedBigInt(parsedTransactionsArray),
-        pagination
       };
     } catch (error: any) {
       logger.error('[SendoAnalyserService] Error getting trades:', error?.message || error);

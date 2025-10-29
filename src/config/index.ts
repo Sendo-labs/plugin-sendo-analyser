@@ -7,6 +7,7 @@ export interface SendoAnalyserConfig {
   heliusApiKey: string;
   birdeyeApiKey?: string;
   birdeyeRateLimit?: number; // requests per second
+  heliusRateLimit?: number; // requests per second
 }
 
 /**
@@ -14,6 +15,7 @@ export interface SendoAnalyserConfig {
  */
 export const SENDO_ANALYSER_DEFAULTS = {
   BIRDEYE_RATE_LIMIT: 1, // 1 request per second by default
+  HELIUS_RATE_LIMIT: 50, // 50 requests per second by default
   BIRDEYE_API_BASE: 'https://public-api.birdeye.so/defi',
   HELIUS_NETWORK: 'mainnet' as const,
 };
@@ -33,11 +35,13 @@ export function getSendoAnalyserConfig(runtime: IAgentRuntime): SendoAnalyserCon
 
   const birdeyeApiKey = runtime.getSetting('BIRDEYE_API_KEY') as string;
   const birdeyeRateLimit = parseInt(runtime.getSetting('BIRDEYE_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT));
+  const heliusRateLimit = parseInt(runtime.getSetting('HELIUS_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT));
 
   return {
     heliusApiKey,
     birdeyeApiKey: birdeyeApiKey || undefined,
     birdeyeRateLimit: birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT,
+    heliusRateLimit: heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT,
   };
 }
 
