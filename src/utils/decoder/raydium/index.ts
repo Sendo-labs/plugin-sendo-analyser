@@ -19,7 +19,7 @@ export const raydiumDecoder = (programId: string, instruction: any) => {
                     minimumAmountOut: raydiumSwapDecoded.minimumAmountOut.toString(),
                 };
             default:
-                console.log(`❓ Unknown Meteora discriminator: ${discriminator}`);
+                // console.log(`❓ Unknown Raydium discriminator: ${discriminator}`);
                 return null;
         }
     } catch (error) {

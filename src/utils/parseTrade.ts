@@ -165,8 +165,8 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
                         purchasePrice: priceAnalysis.purchasePrice,
                         currentPrice: priceAnalysis.currentPrice,
                         athPrice: priceAnalysis.athPrice,
-                        athTimestamp: priceAnalysis.athTimestamp,
-                        priceHistoryPoints: priceAnalysis.priceHistory.length
+                        athTimestamp: priceAnalysis.athTimestamp || null,
+                        priceHistoryPoints: priceAnalysis.priceHistory?.length || 0
                     };
                 }
             }
@@ -185,6 +185,7 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
             balances: {
                 signerAddress: tx.balances.signerAddress,
                 solBalance: tx.balances.signerSolBalance,
+                solBalances: tx.balances.solBalances || [], // Tous les solBalances pour trouver celui du wallet analysé
                 tokenBalances: tx.balances.signerTokenBalances,
             },
             trades: trades
@@ -197,9 +198,10 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
 /**
  * Calculate global summary of all trades
  * @param transactions Parsed transactions with trades and price analysis
+ * @param walletAddress Optional wallet address to use for SOL balance calculation (if not provided, uses signerAddress)
  * @returns Global summary with overview, volume, performance, best/worst trades, and tokens
  */
-export const calculateGlobalSummary = (transactions: any[]) => {
+export const calculateGlobalSummary = (transactions: any[], walletAddress?: string) => {
     const summary = {
         totalTransactions: transactions.length,
         totalTrades: 0,
@@ -223,10 +225,27 @@ export const calculateGlobalSummary = (transactions: any[]) => {
     };
 
     transactions.forEach(transaction => {
-        // Calculate total SOL volume (absolute value of SOL balance changes)
-        if (transaction.balances?.solBalance?.uiChange) {
-            summary.totalVolumeSOL += Math.abs(transaction.balances.solBalance.uiChange);
+        console.log('transaction', transaction);
+        
+        // Déterminer quelle balance SOL utiliser
+        // Si walletAddress est fourni, chercher le solBalance de ce wallet spécifiquement
+        // Sinon, utiliser le solBalance du signataire
+        let solBalanceChange = 0;
+        if (walletAddress && transaction.balances?.signerAddress !== walletAddress) {
+            // Le wallet analysé n'est pas le signataire, chercher son solBalance dans tous les solBalances
+            const walletSolBalance = transaction.balances?.solBalances?.find(
+                (sb: any) => sb.address === walletAddress
+            );
+            solBalanceChange = walletSolBalance?.uiChange || 0;
+        } else {
+            // Le wallet analysé est le signataire, utiliser son solBalance
+            solBalanceChange = transaction.balances?.solBalance?.uiChange || 0;
         }
+        
+        const solVolumeForTransaction = Math.abs(solBalanceChange);
+        
+        // Calculate total SOL volume (absolute value of SOL balance changes)
+        summary.totalVolumeSOL += solVolumeForTransaction;
 
         if (transaction.trades && transaction.trades.length > 0) {
             transaction.trades.forEach((trade: any) => {
@@ -248,7 +267,7 @@ export const calculateGlobalSummary = (transactions: any[]) => {
                 summary.uniqueTokens.add(trade.mint);
 
                 if (trade.priceAnalysis) {
-                    const { purchasePrice, currentPrice, athPrice } = trade.priceAnalysis;
+                    const { purchasePrice, currentPrice, athPrice, athTimestamp } = trade.priceAnalysis;
                     const gainLoss = ((currentPrice - purchasePrice) / purchasePrice) * 100;
                     const missedATH = ((athPrice - currentPrice) / athPrice) * 100;
 
@@ -258,7 +277,26 @@ export const calculateGlobalSummary = (transactions: any[]) => {
 
                     // Calculate PnL in USD
                     const gainLossUSD = (currentPrice - purchasePrice) * tokenAmount;
-                    const gainLossSOL = gainLossUSD / 150; // Approximate SOL price
+                    
+                    // Calculer le volume SOL en utilisant le ratio du volume USD
+                    // Cela donne une répartition plus précise que la division équitable
+                    const tradesWithVolume = transaction.trades.filter((t: any) => {
+                        const change = Math.abs(t.tokenBalance?.uiChange || 0);
+                        return change > 0 && t.priceAnalysis;
+                    });
+                    
+                    // Calculer le volume USD total de tous les trades dans cette transaction
+                    const totalVolumeUSDInTransaction = tradesWithVolume.reduce((sum: number, t: any) => {
+                        const amount = Math.abs(t.tokenBalance.uiChange);
+                        const price = t.priceAnalysis?.purchasePrice || 0;
+                        return sum + (amount * price);
+                    }, 0);
+                    
+                    // Répartir le volume SOL proportionnellement au volume USD
+                    const volumeSOLPerTrade = totalVolumeUSDInTransaction > 0
+                        ? (volumeUSD / totalVolumeUSDInTransaction) * solVolumeForTransaction
+                        : (tradesWithVolume.length > 0 ? solVolumeForTransaction / tradesWithVolume.length : 0);
+                    const gainLossSOL = gainLossUSD / 170; // !!! Approximate SOL price for PnL
 
                     summary.totalTokensTraded += tokenAmount;
                     summary.totalVolumeUSD += volumeUSD;
@@ -302,12 +340,15 @@ export const calculateGlobalSummary = (transactions: any[]) => {
                             trades: 0,
                             totalTokensTraded: 0,
                             totalVolumeUSD: 0,
+                            totalVolumeSOL: 0, // Volume SOL calculé depuis solBalance
                             totalGainLoss: 0,
                             totalMissedATH: 0,
                             bestGainLoss: 0,
                             worstGainLoss: 0,
                             totalPurchasePrice: 0,
-                            totalAthPrice: 0
+                            totalAthPrice: 0,
+                            purchases: [], // Tableau des achats
+                            sales: []      // Tableau des ventes
                         });
                     }
 
@@ -315,12 +356,47 @@ export const calculateGlobalSummary = (transactions: any[]) => {
                     tokenData.trades++;
                     tokenData.totalTokensTraded += tokenAmount;
                     tokenData.totalVolumeUSD += volumeUSD;
+                    tokenData.totalVolumeSOL += volumeSOLPerTrade; // Accumuler le volume SOL depuis solBalance
                     tokenData.totalGainLoss += gainLoss;
                     tokenData.totalMissedATH += missedATH;
                     tokenData.totalPurchasePrice += purchasePrice;
-                    tokenData.totalAthPrice += athPrice;
+                    tokenData.athPrice = athPrice;
                     tokenData.bestGainLoss = Math.max(tokenData.bestGainLoss, gainLoss);
                     tokenData.worstGainLoss = Math.min(tokenData.worstGainLoss, gainLoss);
+
+                    // Créer l'objet trade détaillé
+                    const tradeDetail = {
+                        signature: transaction.signature[0] || transaction.signature,
+                        blockTime: transaction.blockTime,
+                        timestamp: typeof transaction.blockTime === 'string' 
+                            ? parseInt(transaction.blockTime) 
+                            : transaction.blockTime,
+                        tokenAmount: tokenAmount,
+                        tokenAmountRaw: trade.tokenBalance.uiChange, // Montant brut (peut être négatif pour les ventes)
+                        volumeUSD: volumeUSD,
+                        volumeSOL: volumeSOLPerTrade,
+                        purchasePrice: purchasePrice,
+                        currentPrice: currentPrice,
+                        athPrice: athPrice,
+                        athTimestamp: athTimestamp || null,
+                        gainLoss: gainLoss,
+                        gainLossUSD: gainLossUSD,
+                        gainLossSOL: gainLossSOL,
+                        missedATH: missedATH,
+                        tradeType: trade.tradeType // 'increase', 'decrease', ou 'no_change'
+                    };
+
+                    console.log('tradeDetail', tradeDetail);
+
+                    // Ajouter au bon tableau selon le type de trade
+                    if (trade.tradeType === 'increase') {
+                        console.log('increase')
+                        tokenData.purchases.push(tradeDetail);
+                    } else if (trade.tradeType === 'decrease') {
+                        console.log('decrease')
+                        tokenData.sales.push(tradeDetail);
+                    }
+                    // Note: Les trades 'no_change' ne sont pas ajoutés aux tableaux
                 }
             });
         }
@@ -338,8 +414,12 @@ export const calculateGlobalSummary = (transactions: any[]) => {
         averageGainLoss: token.totalGainLoss / token.trades,
         averageMissedATH: token.totalMissedATH / token.trades,
         averageVolumeUSD: token.totalVolumeUSD / token.trades,
+        averageVolumeSOL: token.totalVolumeSOL / token.trades, // Volume SOL moyen par trade
         averagePurchasePrice: token.totalPurchasePrice / token.trades,
-        averageAthPrice: token.totalAthPrice / token.trades
+        averageAthPrice: token.totalAthPrice / token.trades,
+        // Trier les achats et ventes par timestamp (plus récent en premier)
+        purchases: (token.purchases || []).sort((a: any, b: any) => b.timestamp - a.timestamp),
+        sales: (token.sales || []).sort((a: any, b: any) => b.timestamp - a.timestamp)
     }));
 
     return {
@@ -370,7 +450,7 @@ export const calculateGlobalSummary = (transactions: any[]) => {
             mint: summary.bestTrade.mint,
             gainLoss: summary.bestTrade.gainLoss.toFixed(2) + '%',
             gainLossUSD: '$' + summary.bestTrade.gainLossUSD.toFixed(2),
-            gainLossSOL: summary.bestTrade.gainLossSOL.toFixed(4) + ' SOL',
+            gainLossSOL: summary.bestTrade.gainLossSOL.toFixed(6) + ' SOL',
             signature: summary.bestTrade.signature,
             blockTime: summary.bestTrade.blockTime
         } : null,
@@ -378,7 +458,7 @@ export const calculateGlobalSummary = (transactions: any[]) => {
             mint: summary.worstTrade.mint,
             gainLoss: summary.worstTrade.gainLoss.toFixed(2) + '%',
             gainLossUSD: '$' + summary.worstTrade.gainLossUSD.toFixed(2),
-            gainLossSOL: summary.worstTrade.gainLossSOL.toFixed(4) + ' SOL',
+            gainLossSOL: summary.worstTrade.gainLossSOL.toFixed(6) + ' SOL',
             signature: summary.worstTrade.signature,
             blockTime: summary.worstTrade.blockTime
         } : null,

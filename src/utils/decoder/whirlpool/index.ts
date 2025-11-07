@@ -21,7 +21,7 @@ export const whirlpoolDecoder = (programId: string, instruction: any) => {
                     aToB: meteoraSwapDecoded.aToB,
                 };
             default:
-                console.log(`❓ Unknown Meteora discriminator: ${discriminator}`);
+                // console.log(`❓ Unknown Whirlpool discriminator: ${discriminator}`);
                 return null;
         }
     } catch (error) {

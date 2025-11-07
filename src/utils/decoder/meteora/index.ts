@@ -32,7 +32,7 @@ export const meteoraDecoder = (type: string, programId: string, instruction: any
                     currentTimestamp: meteoraSwapDecoded.currentTimestamp.toString(),
                 };
             default:
-                console.log(`❓ Unknown Meteora discriminator: ${discriminator}`);
+                // console.log(`❓ Unknown Meteora discriminator: ${discriminator}`);
                 return null;
         }
     } catch (error) {

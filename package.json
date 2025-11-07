@@ -68,6 +68,7 @@
     "test:integration": "bun test --bail src/__tests__/integration/*.test.ts",
     "test:integration:llm": "USE_REAL_LLM=true bun run test:integration",
     "test:all": "bun run test:unit && bun run test:integration",
+    "test:routes": "bun run src/tests/test-routes.ts",
     "publish": "elizaos plugin publish"
   },
   "platform": "universal",

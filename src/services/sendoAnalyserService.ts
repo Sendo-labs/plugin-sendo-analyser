@@ -150,8 +150,8 @@ export class SendoAnalyserService extends Service {
       // Parse transactions and analyze prices (optimized with caching and deduplication)
       const parsedTransactionsArray = await parseTransactionsWithPriceAnalysis(transactions, this.birdeyeService);
 
-      // Calculate global summary
-      const globalSummary = calculateGlobalSummary(parsedTransactionsArray);
+      // Calculate global summary (pass wallet address for accurate SOL balance calculation)
+      const globalSummary = calculateGlobalSummary(parsedTransactionsArray, address);
 
       // Build pagination info
       const pagination = {

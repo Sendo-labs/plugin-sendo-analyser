@@ -34,7 +34,7 @@ export const orcaDecoder = (programId: string, instruction: any) => {
                     currentTimestamp: meteoraSwapDecoded.currentTimestamp.toString(),
                 };
             default:
-                console.log(`❓ Unknown Meteora discriminator: ${discriminator}`);
+                // console.log(`❓ Unknown Orca discriminator: ${discriminator}`);
                 return null;
         }
     } catch (error) {
