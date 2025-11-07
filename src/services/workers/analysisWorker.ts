@@ -199,6 +199,27 @@ export async function processAnalysisJobAsync(
         }
       });
 
+      // First pass: Calculate total USD volume per transaction for proportional SOL distribution
+      const txVolumeMap = new Map<string, number>();
+      result.transactions.forEach((tx: any) => {
+        let txTotalVolumeUSD = 0;
+        tx.trades?.forEach((trade: any) => {
+          if (trade.mint && trade.amount > 0) {
+            const blockTime = Number(tx.blockTime);
+            const timestampHour = Math.floor(blockTime / 3600) * 3600;
+            const key = `${trade.mint}-${timestampHour}`;
+            const priceAnalysis = priceMap.get(key);
+            if (priceAnalysis) {
+              const volumeUSD = Number(trade.amount) * Number(priceAnalysis.purchasePrice);
+              txTotalVolumeUSD += volumeUSD;
+            }
+          }
+        });
+        if (txTotalVolumeUSD > 0) {
+          txVolumeMap.set(tx.signature, txTotalVolumeUSD);
+        }
+      });
+
       // Process trades with enriched price data
       result.transactions.forEach((tx: any) => {
         tx.trades?.forEach((trade: any) => {
@@ -212,6 +233,7 @@ export async function processAnalysisJobAsync(
           const priceAnalysis = priceMap.get(key);
 
           let volume = 0;
+          let volumeSOL = 0;  // SOL volume for this trade
           let missedATH = 0;
           let gainLoss = 0;
           let pnl = 0;
@@ -226,6 +248,17 @@ export async function processAnalysisJobAsync(
             const { purchasePrice, currentPrice, athPrice } = priceAnalysis;
             symbol = priceAnalysis.symbol || trade.tokenSymbol;
             name = priceAnalysis.name;  // Store full token name
+
+            // Calculate USD volume for this trade
+            volume = Number(trade.amount) * Number(purchasePrice);
+
+            // Calculate proportional SOL volume for this trade
+            // Formula: volumeSOL = (tradeVolumeUSD / txTotalVolumeUSD) × txSOLBalanceChange
+            const txTotalVolumeUSD = txVolumeMap.get(tx.signature) || 0;
+            const txSOLChange = tx.solBalanceChange ? Math.abs(Number(tx.solBalanceChange)) : 0;
+            if (txTotalVolumeUSD > 0 && txSOLChange > 0) {
+              volumeSOL = (volume / txTotalVolumeUSD) * txSOLChange;
+            }
 
             // DATA VALIDATION: Filter aberrant prices (likely BirdEye bugs or rug pulls)
             // Skip trades with unrealistic prices (> $1M per token)
@@ -244,7 +277,6 @@ export async function processAnalysisJobAsync(
               return;
             }
 
-            volume = Number(trade.amount) * Number(purchasePrice);
             missedATH = athPrice > 0 ? Number(((athPrice - currentPrice) / athPrice) * 100) : 0;
             gainLoss = purchasePrice > 0 ? Number(((currentPrice - purchasePrice) / purchasePrice) * 100) : 0;
 
@@ -278,7 +310,8 @@ export async function processAnalysisJobAsync(
             const existing = tokensMap.get(trade.mint);
             tokensMap.set(trade.mint, {
               ...existing,
-              totalVolume: Number(existing.totalVolume) + Number(volume),
+              totalVolumeUSD: Number(existing.totalVolumeUSD || 0) + Number(volume),
+              totalVolumeSOL: Number(existing.totalVolumeSOL || 0) + Number(volumeSOL),
               totalMissedATH: Number(existing.totalMissedATH) + Number(missedATH),
               totalGainLoss: Number(existing.totalGainLoss) + Number(gainLoss),
               tradeCount: Number(existing.tradeCount) + 1,
@@ -295,7 +328,8 @@ export async function processAnalysisJobAsync(
               mint: trade.mint,
               symbol,
               name,  // Store full token name
-              totalVolume: Number(volume),
+              totalVolumeUSD: Number(volume),
+              totalVolumeSOL: Number(volumeSOL),
               totalMissedATH: Number(missedATH),
               totalGainLoss: Number(gainLoss),
               tradeCount: 1,

@@ -86,9 +86,44 @@ export interface AnalysisStatusResponse {
   error?: string;
 }
 
+// Token analysis result from database
+export interface TokenAnalysisResult {
+  id: string;
+  jobId: string;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  totalVolumeUSD: string;
+  totalVolumeSOL: string;
+  totalGainLoss: string;
+  totalMissedATH: string;
+  trades: number;
+  averagePurchasePrice: string | null;
+  averageAthPrice: string | null;
+  totalTokensTraded: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Summary stats from analysis
+export interface AnalysisSummary {
+  total_missed_usd: number;
+  total_volume_sol: number;
+  total_pnl: number;
+  success_rate: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_trades: number;
+  priced_trades: number;
+  trades_missing_price: number;
+  tokens_discovered: number;
+  total_transactions: number;
+  nft_count: number;
+}
+
 // GET /analysis/:address/results - Get paginated tokens
 export interface AnalysisResultsResponse {
-  tokens: any[];  // Array of token analysis results
+  tokens: TokenAnalysisResult[];
   pagination: {
     page: number;
     limit: number;
@@ -97,5 +132,5 @@ export interface AnalysisResultsResponse {
     hasMore: boolean;
   };
   analysisStatus: JobStatus;
-  summary?: any;  // Overall summary stats
+  summary?: AnalysisSummary;
 }

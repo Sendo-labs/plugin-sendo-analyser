@@ -118,7 +118,8 @@ export const tokenAnalysisResults = sendoAnalyserSchema.table('token_analysis_re
   mint: text('mint').notNull().references(() => tokens.mint, { onDelete: 'cascade' }),
 
   // Aggregated statistics
-  totalVolume: numeric('total_volume').notNull().default('0'),
+  totalVolumeUSD: numeric('total_volume_usd').notNull().default('0'),
+  totalVolumeSOL: numeric('total_volume_sol').notNull().default('0'),
   totalGainLoss: numeric('total_gain_loss').notNull().default('0'),
   totalMissedATH: numeric('total_missed_ath').notNull().default('0'),
   trades: integer('trades').notNull().default(0),

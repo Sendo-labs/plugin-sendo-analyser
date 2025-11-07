@@ -70,7 +70,8 @@ export async function upsertTokenResults(
       return {
         jobId,
         mint: token.mint,
-        totalVolume: token.totalVolume || 0,
+        totalVolumeUSD: token.totalVolumeUSD || 0,
+        totalVolumeSOL: token.totalVolumeSOL || 0,
         totalGainLoss: token.totalGainLoss || 0,
         totalMissedATH: token.totalMissedATH || 0,
         trades: token.tradeCount || 0,
@@ -91,7 +92,8 @@ export async function upsertTokenResults(
         .onConflictDoUpdate({
           target: [tokenAnalysisResults.jobId, tokenAnalysisResults.mint],
           set: {
-            totalVolume: sql`EXCLUDED.total_volume`,
+            totalVolumeUSD: sql`EXCLUDED.total_volume_usd`,
+            totalVolumeSOL: sql`EXCLUDED.total_volume_sol`,
             totalGainLoss: sql`EXCLUDED.total_gain_loss`,
             totalMissedATH: sql`EXCLUDED.total_missed_ath`,
             trades: sql`EXCLUDED.trades`,
@@ -129,7 +131,8 @@ export async function getTokenResults(
         id: tokenAnalysisResults.id,
         jobId: tokenAnalysisResults.jobId,
         mint: tokenAnalysisResults.mint,
-        totalVolume: tokenAnalysisResults.totalVolume,
+        totalVolumeUSD: tokenAnalysisResults.totalVolumeUSD,
+        totalVolumeSOL: tokenAnalysisResults.totalVolumeSOL,
         totalGainLoss: tokenAnalysisResults.totalGainLoss,
         totalMissedATH: tokenAnalysisResults.totalMissedATH,
         trades: tokenAnalysisResults.trades,
