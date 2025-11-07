@@ -3,10 +3,13 @@ import {
   IAgentRuntime,
   logger,
 } from '@elizaos/core';
-import { createHeliusService, getBirdeyeService, setGlobalHeliusService, setGlobalBirdeyeService } from './api/index.js';
+import { createHeliusService, setGlobalHeliusService, setGlobalBirdeyeService, getBirdeyeService } from './api/index.js';
 import { decodeTxData, serializedBigInt } from '../utils/decoder/index.js';
 import { parseTransactionsWithPriceAnalysis, calculateGlobalSummary } from '../utils/parseTrade.js';
 import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConfig } from '../config/index.js';
+import { createCachedBirdeyeService } from './cache/priceCache';
+import { runCacheCleanup } from './cache';
+import { startAnalysisJob, getAnalysisStatus, getAnalysisTransactions } from './analysis';
 import type { HeliusService } from './api/helius.js';
 import type { BirdeyeService } from './api/birdeyes.js';
 
@@ -36,14 +39,13 @@ export class SendoAnalyserService extends Service {
       config.heliusApiKey,
       config.heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT
     );
-    this.birdeyeService = getBirdeyeService(
-      config.birdeyeApiKey,
-      config.birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT
-    );
 
-    // Set global services for use in decoders and utilities
+    // BirdEye service will be initialized in initialize() after runtime.db is available
+    // Temporary placeholder that will be replaced
+    this.birdeyeService = null as any;
+
+    // Set global Helius service
     setGlobalHeliusService(this.heliusService);
-    setGlobalBirdeyeService(this.birdeyeService);
 
     logger.info(`Sendo Analyser service initialized with Helius network: ${SENDO_ANALYSER_DEFAULTS.HELIUS_NETWORK}`);
   }
@@ -51,7 +53,17 @@ export class SendoAnalyserService extends Service {
   async initialize(runtime: IAgentRuntime): Promise<void> {
     logger.info('[SendoAnalyserService] Initializing...');
     this.runtime = runtime;
-    logger.info('[SendoAnalyserService] Initialized successfully');
+
+    // Create BirdEye service with DynamicRateLimiter (uses global counter for fair sharing)
+    this.birdeyeService = getBirdeyeService(
+      this.serviceConfig.birdeyeApiKey
+    ) as any;
+
+    // Set global BirdEye service
+    setGlobalBirdeyeService(this.birdeyeService);
+
+    logger.info('[SendoAnalyserService] Initialized successfully with DynamicRateLimiter');
+    logger.info(`[SendoAnalyserService] BirdEye RPS: ${SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS}, Usage: ${SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT}%`);
   }
 
   async stop(): Promise<void> {
@@ -80,12 +92,20 @@ export class SendoAnalyserService extends Service {
     return db;
   }
 
+  /**
+   * Create cached BirdEye service wrapper
+   */
+  private getCachedBirdeyeService(): BirdeyeService {
+    return createCachedBirdeyeService(this.getDb(), this.birdeyeService);
+  }
+
   // ============================================
   // PRIVATE HELPER METHODS FOR API CALLS
   // ============================================
 
   /**
-   * Internal method to get transactions data from Helius
+   * Internal method to get transactions data from Helius (without cache)
+   * Used by legacy endpoints
    */
   private async getTransactionsData(address: string, limit: number, before?: string): Promise<any> {
     const transactions: any[] = [];
@@ -121,16 +141,14 @@ export class SendoAnalyserService extends Service {
   }
 
   // ============================================
-  // WALLET ANALYSIS METHODS
+  // LEGACY WALLET ANALYSIS METHODS
+  // These methods are kept for backward compatibility
+  // New code should use async analysis endpoints instead
   // ============================================
 
   /**
-   * Get trades for a wallet address with price analysis (OPTIMIZED)
-   * Uses parseTransactionsWithPriceAnalysis for better performance
-   * @param address - Solana wallet address
-   * @param limit - Number of transactions to fetch (default: 50)
-   * @param cursor - Cursor for pagination (optional)
-   * @returns Object with trades array, summary, and pagination metadata
+   * Get trades for a wallet address with price analysis (LEGACY)
+   * @deprecated Use async analysis endpoints instead for better performance
    */
   async getTradesForAddress(address: string, limit: number = 50, cursor?: string): Promise<any> {
     try {
@@ -183,11 +201,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get signatures for a wallet address
-   * @param address - Solana wallet address
-   * @param limit - Number of signatures to fetch (default: 5)
-   * @param cursor - Cursor for pagination (optional)
-   * @returns Object with signatures array and pagination metadata
+   * Get signatures for a wallet address (LEGACY)
    */
   async getSignaturesForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
@@ -217,11 +231,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get transactions for a wallet address (decoded)
-   * @param address - Solana wallet address
-   * @param limit - Number of transactions to fetch (default: 5)
-   * @param cursor - Cursor for pagination (optional)
-   * @returns Object with transactions array and pagination metadata
+   * Get transactions for a wallet address (decoded) (LEGACY)
    */
   async getTransactionsForAddress(address: string, limit: number = 5, cursor?: string): Promise<any> {
     try {
@@ -257,9 +267,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get token holdings for a wallet address
-   * @param address - Solana wallet address
-   * @returns Token holdings information
+   * Get token holdings for a wallet address (LEGACY)
    */
   async getTokensForAddress(address: string): Promise<any> {
     try {
@@ -273,9 +281,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get NFT holdings for a wallet address
-   * @param address - Solana wallet address
-   * @returns NFT holdings information
+   * Get NFT holdings for a wallet address (LEGACY)
    */
   async getNftsForAddress(address: string): Promise<any> {
     try {
@@ -289,9 +295,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get wallet balance and global overview
-   * @param address - Solana wallet address
-   * @returns Wallet balance and overview
+   * Get wallet balance and global overview (LEGACY)
    */
   async getGlobalForAddress(address: string): Promise<any> {
     try {
@@ -307,9 +311,7 @@ export class SendoAnalyserService extends Service {
   }
 
   /**
-   * Get complete wallet analysis (combines all data)
-   * @param address - Solana wallet address
-   * @returns Complete wallet analysis
+   * Get complete wallet analysis (combines all data) (LEGACY)
    */
   async getCompleteWalletAnalysis(address: string): Promise<any> {
     try {
@@ -334,5 +336,56 @@ export class SendoAnalyserService extends Service {
       logger.error('[SendoAnalyserService] Error getting complete analysis:', error?.message || error);
       throw error;
     }
+  }
+
+  // ============================================
+  // ASYNC ANALYSIS METHODS (NEW)
+  // These are the new optimized endpoints with caching
+  // ============================================
+
+  /**
+   * Start async wallet analysis job (or return existing)
+   * @param address - Solana wallet address
+   * @returns Job info with job_id and status
+   */
+  async startAsyncAnalysis(address: string): Promise<any> {
+    const db = this.getDb();
+    const cachedBirdeyeService = this.getCachedBirdeyeService();
+    return startAnalysisJob(db, this.runtime.agentId, address, this.heliusService, cachedBirdeyeService);
+  }
+
+  /**
+   * Get analysis job status with progress
+   * @param address - Solana wallet address
+   * @returns Job status with progress and results
+   */
+  async getAsyncAnalysisStatus(address: string): Promise<any> {
+    const db = this.getDb();
+    return getAnalysisStatus(db, address);
+  }
+
+  /**
+   * Get paginated transactions from analysis job
+   * @param address - Solana wallet address
+   * @param page - Page number (starts at 1)
+   * @param limit - Number of transactions per page
+   * @returns Paginated transactions
+   */
+  async getAsyncAnalysisTokens(address: string, page: number = 1, limit: number = 50): Promise<any> {
+    const db = this.getDb();
+    return getAnalysisTransactions(db, address, page, limit);
+  }
+
+  // ============================================
+  // CACHE MANAGEMENT
+  // ============================================
+
+  /**
+   * Run cache cleanup (prices, transactions, jobs)
+   * Should be scheduled to run periodically (e.g., daily cron)
+   */
+  async runCacheCleanup(): Promise<void> {
+    const db = this.getDb();
+    await runCacheCleanup(db);
   }
 }

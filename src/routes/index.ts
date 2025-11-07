@@ -17,15 +17,15 @@ function sendError(res: any, status: number, code: string, message: string, deta
 }
 
 // ============================================
-// ROUTE HANDLERS
+// ASYNC ANALYSIS ROUTES
 // ============================================
 
 /**
- * GET /trades/:address?limit=5&cursor=signature
- * Get trades for a wallet address with price analysis
+ * POST /analysis/start
+ * Start async wallet analysis job
  */
-async function getTradesHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
-  const { address } = req.params;
+async function startAnalysisHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+  const { address } = req.body;
   const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
 
   if (!analyserService) {
@@ -36,35 +36,20 @@ async function getTradesHandler(req: any, res: any, runtime: IAgentRuntime): Pro
     return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
   }
 
-  // Parse limit from query params
-  const limitParam = req.query?.limit;
-  let limit = 5; // default
-
-  if (limitParam) {
-    const parsedLimit = parseInt(limitParam, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1) {
-      return sendError(res, 400, 'INVALID_LIMIT', 'limit must be a positive integer');
-    }
-    limit = Math.min(parsedLimit, 50); // max 50
-  }
-
-  // Parse cursor from query params
-  const cursor = req.query?.cursor as string | undefined;
-
   try {
-    const result = await analyserService.getTradesForAddress(address, limit, cursor);
-    sendSuccess(res, { address, ...result });
+    const result = await analyserService.startAsyncAnalysis(address);
+    sendSuccess(res, result);
   } catch (error: any) {
-    logger.error('[Route] Failed to get trades:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get trades', error.message);
+    logger.error('[Route] Failed to start analysis:', error);
+    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to start analysis', error.message);
   }
 }
 
 /**
- * GET /signatures/:address?limit=5&cursor=signature
- * Get transaction signatures for a wallet address
+ * GET /analysis/:address/status
+ * Get analysis job status with summary (tokens aggregated)
  */
-async function getSignaturesHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+async function getAnalysisStatusHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
   const { address } = req.params;
   const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
 
@@ -76,76 +61,23 @@ async function getSignaturesHandler(req: any, res: any, runtime: IAgentRuntime):
     return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
   }
 
-  // Parse limit from query params
-  const limitParam = req.query?.limit;
-  let limit = 5; // default
-
-  if (limitParam) {
-    const parsedLimit = parseInt(limitParam, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1) {
-      return sendError(res, 400, 'INVALID_LIMIT', 'limit must be a positive integer');
-    }
-    limit = Math.min(parsedLimit, 50); // max 50
-  }
-
-  // Parse cursor from query params
-  const cursor = req.query?.cursor as string | undefined;
-
   try {
-    const result = await analyserService.getSignaturesForAddress(address, limit, cursor);
-    sendSuccess(res, { address, ...result });
+    const result = await analyserService.getAsyncAnalysisStatus(address);
+    sendSuccess(res, result);
   } catch (error: any) {
-    logger.error('[Route] Failed to get signatures:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get signatures', error.message);
+    logger.error('[Route] Failed to get analysis status:', error);
+    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get analysis status', error.message);
   }
 }
 
 /**
- * GET /transactions/:address?limit=5&cursor=signature
- * Get decoded transactions for a wallet address
+ * GET /analysis/:address/results?page=1&limit=50
+ * Get paginated tokens from completed/ongoing analysis
  */
-async function getTransactionsHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+async function getAnalysisResultsHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
   const { address } = req.params;
-  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
-
-  if (!analyserService) {
-    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
-  }
-
-  if (!address) {
-    return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
-  }
-
-  // Parse limit from query params
-  const limitParam = req.query?.limit;
-  let limit = 5; // default
-
-  if (limitParam) {
-    const parsedLimit = parseInt(limitParam, 10);
-    if (isNaN(parsedLimit) || parsedLimit < 1) {
-      return sendError(res, 400, 'INVALID_LIMIT', 'limit must be a positive integer');
-    }
-    limit = Math.min(parsedLimit, 50); // max 50
-  }
-
-  // Parse cursor from query params
-  const cursor = req.query?.cursor as string | undefined;
-
-  try {
-    const result = await analyserService.getTransactionsForAddress(address, limit, cursor);
-    sendSuccess(res, { address, ...result });
-  } catch (error: any) {
-    logger.error('[Route] Failed to get transactions:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get transactions', error.message);
-  }
-}
-
-/**
- * GET /tokens/:address
- * Get token holdings for a wallet address
- */
-async function getTokensHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
-  const { address } = req.params;
+  const page = parseInt(req.query.page) || 1;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100); // Max 100
   const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
 
   if (!analyserService) {
@@ -157,86 +89,11 @@ async function getTokensHandler(req: any, res: any, runtime: IAgentRuntime): Pro
   }
 
   try {
-    const tokens = await analyserService.getTokensForAddress(address);
-    sendSuccess(res, { address, tokens });
+    const result = await analyserService.getAsyncAnalysisTokens(address, page, limit);
+    sendSuccess(res, result);
   } catch (error: any) {
-    logger.error('[Route] Failed to get tokens:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get tokens', error.message);
-  }
-}
-
-/**
- * GET /nfts/:address
- * Get NFT holdings for a wallet address
- */
-async function getNftsHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
-  const { address } = req.params;
-  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
-
-  if (!analyserService) {
-    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
-  }
-
-  if (!address) {
-    return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
-  }
-
-  try {
-    const nfts = await analyserService.getNftsForAddress(address);
-    sendSuccess(res, { address, nfts });
-  } catch (error: any) {
-    logger.error('[Route] Failed to get NFTs:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get NFTs', error.message);
-  }
-}
-
-/**
- * GET /global/:address
- * Get wallet balance and global overview
- */
-async function getGlobalHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
-  const { address } = req.params;
-  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
-
-  if (!analyserService) {
-    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
-  }
-
-  if (!address) {
-    return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
-  }
-
-  try {
-    const global = await analyserService.getGlobalForAddress(address);
-    sendSuccess(res, { address, global });
-  } catch (error: any) {
-    logger.error('[Route] Failed to get global info:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get global info', error.message);
-  }
-}
-
-/**
- * GET /wallet/:address
- * Get complete wallet analysis (all data combined)
- */
-async function getCompleteWalletHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
-  const { address } = req.params;
-  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
-
-  if (!analyserService) {
-    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
-  }
-
-  if (!address) {
-    return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
-  }
-
-  try {
-    const analysis = await analyserService.getCompleteWalletAnalysis(address);
-    sendSuccess(res, { analysis });
-  } catch (error: any) {
-    logger.error('[Route] Failed to get complete wallet analysis:', error);
-    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get complete wallet analysis', error.message);
+    logger.error('[Route] Failed to get analysis results:', error);
+    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to get analysis results', error.message);
   }
 }
 
@@ -246,38 +103,18 @@ async function getCompleteWalletHandler(req: any, res: any, runtime: IAgentRunti
 
 export const sendoAnalyserRoutes: Route[] = [
   {
-    type: 'GET',
-    path: '/signatures/:address',
-    handler: getSignaturesHandler,
+    type: 'POST',
+    path: '/analysis/start',
+    handler: startAnalysisHandler,
   },
   {
     type: 'GET',
-    path: '/trades/:address',
-    handler: getTradesHandler,
+    path: '/analysis/:address/status',
+    handler: getAnalysisStatusHandler,
   },
   {
     type: 'GET',
-    path: '/transactions/:address',
-    handler: getTransactionsHandler,
-  },
-  {
-    type: 'GET',
-    path: '/tokens/:address',
-    handler: getTokensHandler,
-  },
-  {
-    type: 'GET',
-    path: '/nfts/:address',
-    handler: getNftsHandler,
-  },
-  {
-    type: 'GET',
-    path: '/global/:address',
-    handler: getGlobalHandler,
-  },
-  {
-    type: 'GET',
-    path: '/wallet/:address',
-    handler: getCompleteWalletHandler,
+    path: '/analysis/:address/results',
+    handler: getAnalysisResultsHandler,
   },
 ];

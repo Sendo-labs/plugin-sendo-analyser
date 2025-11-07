@@ -12,6 +12,7 @@ export interface HeliusService {
   getTransactionsForAddress(address: string, limit: number, before?: string): Promise<{
     transactions: any[];
     signatures: string[];
+    paginationToken?: string;
     hasMore: boolean;
   }>;
 }
@@ -81,42 +82,56 @@ export function createHeliusService(apiKey: string, requestsPerSecond: number = 
     },
 
     getTransactionsForAddress: async (address: string, limit: number, before?: string) => {
-      const config: any = { limit };
+      // Use new Helius getTransactionsForAddress RPC method
+      // This combines getSignaturesForAddress + getTransaction in 1 call!
+      // Limit: max 100 transactions with full details
 
-      if (before) {
-        config.before = before;
-      }
+      return withRateLimit(async () => {
+        const params: any = {
+          transactionDetails: 'full',  // Get full transaction data
+          limit: Math.min(limit, 100), // Max 100 with full details
+        };
 
-      // Récupérer les signatures (1 seul appel rate limité)
-      const signatures = await withRateLimit(async () => {
-        return await helius.getSignaturesForAddress(address, config);
+        // Add pagination token if provided
+        if (before) {
+          params.paginationToken = before;
+        }
+
+        // Make RPC call directly (helius-sdk doesn't expose this yet)
+        const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getTransactionsForAddress',
+            params: [address, params]
+          })
+        });
+
+        const { result } = await response.json();
+
+        if (!result || !result.data) {
+          return {
+            transactions: [],
+            signatures: [],
+            paginationToken: undefined,
+            hasMore: false
+          };
+        }
+
+        // Filter out failed transactions
+        const validTransactions = result.data.filter((tx: any) =>
+          tx.meta?.err === null || tx.meta?.err === undefined
+        );
+
+        return {
+          transactions: validTransactions,
+          signatures: validTransactions.map((tx: any) => tx.transaction.signatures[0]),
+          paginationToken: result.paginationToken || undefined,
+          hasMore: !!result.paginationToken
+        };
       });
-
-      // Filtrer les signatures sans erreur (err === null ou err === undefined)
-      const validSignatures = signatures.filter(sig => sig.err === null || sig.err === undefined);
-
-      // Mapper uniquement les signatures valides en promise rate limitée
-      // Chaque appel à getTransaction a son propre rate limit
-      const transactionPromises = validSignatures.map(signatureObj =>
-        withRateLimit(async () => {
-          return helius.getTransaction(signatureObj.signature, {
-            maxSupportedTransactionVersion: 0
-          });
-        })
-      );
-
-      // Exécuter TOUTES les transactions en parallèle
-      // Le rate limiter contrôle automatiquement le flux
-      const transactionResults = await Promise.all(transactionPromises);
-
-      // Filtrer les null/undefined
-      const transactions = transactionResults.filter(tx => tx !== null);
-
-      return {
-        transactions,
-        signatures: signatures.map(s => s.signature),
-        hasMore: signatures.length === limit
-      };
     },
   };
 }

@@ -5,4 +5,11 @@
  * These schemas are automatically migrated by ElizaOS's dynamic migration system.
  */
 
-export { walletAnalysisCache, walletInsights, sendoAnalyserSchema } from './wallet-analysis.js';
+export {
+  walletAnalysisJobs,
+  tokens,
+  tokenPriceCache,
+  transactionCache,
+  tokenAnalysisResults,
+  sendoAnalyserSchema
+} from './wallet-analysis.js';

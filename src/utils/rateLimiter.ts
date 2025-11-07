@@ -47,25 +47,23 @@ export class RateLimiter {
 
     try {
       while (this.queue.length > 0) {
-        // Traiter par batch pour de meilleures performances
-        const batch = this.queue.splice(0, this.burstCapacity);
+        // Process requests ONE AT A TIME with proper spacing
+        // This ensures we respect the rate limit without bursting
+        // which was causing timeouts with the previous batch approach
+        const { task, resolve, reject } = this.queue.shift()!;
 
-        // Exécuter le batch en parallèle
-        const promises = batch.map(async ({ task, resolve, reject }) => {
-          try {
-            const result = await task();
-            resolve(result);
-            this.onSuccess();
-          } catch (error) {
-            reject(error);
-            this.onError(error);
-          }
-        });
+        try {
+          const result = await task();
+          resolve(result);
+          this.onSuccess();
+        } catch (error) {
+          reject(error);
+          this.onError(error);
+        }
 
-        // Attendre que le batch soit terminé
-        await Promise.allSettled(promises);
-
-        // Délai adaptatif entre les batches
+        // Wait BETWEEN each request (not after batch)
+        // With 80 RPS: delay = 1000ms / 80 = 12.5ms between requests
+        // This spaces requests evenly to avoid rate limit errors
         if (this.queue.length > 0) {
           const delay = this.calculateDelay();
           await new Promise(resolve => setTimeout(resolve, delay));

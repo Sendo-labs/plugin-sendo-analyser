@@ -1,6 +1,13 @@
 import axios from 'axios';
-import { RateLimiter } from '../../utils/rateLimiter.js';
 import { SENDO_ANALYSER_DEFAULTS } from '../../config/index.js';
+import { DynamicRateLimiter } from '../../utils/dynamicRateLimiter.js';
+
+/**
+ * BirdEye Service with Dynamic Rate Limiting
+ *
+ * Provides BirdEye API access with fair sharing of rate limits
+ * across multiple concurrent analysis jobs using DynamicRateLimiter.
+ */
 
 // BirdEye price data interface
 export interface BirdEyePriceData {
@@ -31,6 +38,10 @@ export interface BirdeyeService {
     timeframe?: '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D'
   ): Promise<BirdEyePriceData[]>;
 
+  getMultiPrice(
+    mints: string[]
+  ): Promise<Map<string, number>>;
+
   getPriceAnalysis(
     mint: string,
     purchaseTimestamp: number
@@ -40,22 +51,31 @@ export interface BirdeyeService {
     athPrice: number;
     athTimestamp: number;
     priceHistory: BirdEyePriceData[];
+    symbol: string | null;
+    name: string | null;
   } | null>;
 }
 
 /**
- * Creates a Birdeye service instance
+ * Creates a BirdEye service with Dynamic Rate Limiter
+ *
  * @param apiKey - Optional Birdeye API key
- * @param requestsPerSecond - Rate limit (requests per second)
- * @returns BirdeyeService instance
+ * @returns BirdeyeService instance with dynamic rate limiting and utility methods
  */
-export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1): BirdeyeService {
-  const birdEyeLimiter = new RateLimiter({
-    requestsPerSecond,
-    burstCapacity: 50,
-    adaptiveTiming: true
-  });
+export function getBirdeyeService(
+  apiKey?: string
+): BirdeyeService & {
+  getRateLimiterStats: () => any;
+  getRecommendedTimeout: (tokens?: number) => number;
+  getOptimalBatchSize: () => number;
+} {
   const BIRDEYE_API_BASE = SENDO_ANALYSER_DEFAULTS.BIRDEYE_API_BASE;
+
+  // Create dynamic rate limiter
+  const dynamicLimiter = new DynamicRateLimiter({
+    maxRPS: SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS,
+    usagePercent: SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT,
+  });
 
   /**
    * Fetch price history for a token between two timestamps.
@@ -66,7 +86,7 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
     toTimestamp: number,
     timeframe: '1m' | '3m' | '5m' | '15m' | '30m' | '1H' | '2H' | '4H' | '6H' | '8H' | '12H' | '1D' | '3D' | '1W' | '1M' = '30m'
   ): Promise<BirdEyePriceData[]> => {
-    return birdEyeLimiter.schedule(async () => {
+    return dynamicLimiter.schedule(async () => {
       try {
         const response = await axios.get<BirdEyeResponse>(`${BIRDEYE_API_BASE}/history_price`, {
           params: {
@@ -134,6 +154,89 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
   };
 
   /**
+   * Fetch current prices for multiple tokens (up to 100) in a single API call
+   * Available in PREMIUM package and above
+   * POST /defi/multi_price
+   */
+  const getMultiPrice = async (mints: string[]): Promise<Map<string, number>> => {
+    return dynamicLimiter.schedule(async () => {
+      try {
+        // Batch requests in chunks of 100 (API limit)
+        const priceMap = new Map<string, number>();
+
+        for (let i = 0; i < mints.length; i += 100) {
+          const batch = mints.slice(i, i + 100);
+
+          const response = await axios.post(
+            `${BIRDEYE_API_BASE}/multi_price`,
+            {
+              list_address: batch.join(',')
+            },
+            {
+              headers: {
+                'accept': 'application/json',
+                'x-chain': 'solana',
+                'Content-Type': 'application/json',
+                ...(apiKey && { 'X-API-KEY': apiKey })
+              },
+              timeout: 10000
+            }
+          );
+
+          if (response.data.success && response.data.data) {
+            // Parse response: { data: { [mint: string]: { value: number } } }
+            Object.entries(response.data.data).forEach(([mint, data]: [string, any]) => {
+              if (data?.value) {
+                priceMap.set(mint, data.value);
+              }
+            });
+          }
+        }
+
+        return priceMap;
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 429) {
+          console.warn(`Rate limit hit for multi_price, retrying in 1s...`);
+          await new Promise((r) => setTimeout(r, 1000));
+          return new Map();
+        }
+        console.error(`BirdEye multi_price error:`, axios.isAxiosError(error) ? `${error.response?.status} - ${error.message}` : (error instanceof Error ? error.message : String(error)));
+        return new Map();
+      }
+    });
+  };
+
+  /**
+   * Get token metadata (symbol, name) from BirdEye
+   */
+  const getTokenMetadata = async (mint: string) => {
+    return dynamicLimiter.schedule(async () => {
+      try {
+        const response = await axios.get(`https://public-api.birdeye.so/defi/token_overview`, {
+          params: { address: mint },
+          headers: {
+            'accept': 'application/json',
+            'x-chain': 'solana',
+            ...(apiKey && { 'X-API-KEY': apiKey })
+          },
+          timeout: 5000
+        });
+
+        if (response.data.success && response.data.data) {
+          return {
+            symbol: response.data.data.symbol || null,
+            name: response.data.data.name || null
+          };
+        }
+        return { symbol: null, name: null };
+      } catch (error) {
+        console.error(`BirdEye metadata error for ${mint}:`, axios.isAxiosError(error) ? `${error.response?.status} - ${error.message}` : (error instanceof Error ? error.message : String(error)));
+        return { symbol: null, name: null };
+      }
+    });
+  };
+
+  /**
    * Analyze price from purchase to now and compute ATH.
    */
   const getPriceAnalysis = async (
@@ -142,8 +245,11 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
   ) => {
     const now = Math.floor(Date.now() / 1000);
 
-    // Use 1H timeframe for balanced performance and data
-    const priceHistory = await getFullHistoricalPrices(mint, purchaseTimestamp, now, '1H');
+    // Fetch metadata and price history in parallel
+    const [metadata, priceHistory] = await Promise.all([
+      getTokenMetadata(mint),
+      getFullHistoricalPrices(mint, purchaseTimestamp, now, '1H')
+    ]);
 
     if (!priceHistory.length) return null;
 
@@ -160,12 +266,32 @@ export function getBirdeyeService(apiKey?: string, requestsPerSecond: number = 1
       }
     }
 
-    return { purchasePrice, currentPrice, athPrice, athTimestamp, priceHistory };
+    return {
+      purchasePrice,
+      currentPrice,
+      athPrice,
+      athTimestamp,
+      priceHistory,
+      symbol: metadata.symbol,
+      name: metadata.name
+    };
   };
 
   return {
     getHistoricalPrices,
     getFullHistoricalPrices,
+    getMultiPrice,
     getPriceAnalysis,
+
+    // Additional utility methods
+    getRateLimiterStats: () => dynamicLimiter.getStats(),
+
+    getRecommendedTimeout: (tokensPerBatch = 50) => {
+      return dynamicLimiter.calculateRecommendedTimeout(tokensPerBatch, 2, 0.5, 2);
+    },
+
+    getOptimalBatchSize: () => {
+      return dynamicLimiter.calculateOptimalBatchSize(2.5, 2);
+    },
   };
 }
