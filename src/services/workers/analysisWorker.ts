@@ -321,13 +321,18 @@ export async function processAnalysisJobAsync(
               return;
             }
 
-            missedATH = athPrice > 0 ? Number(((athPrice - currentPrice) / athPrice) * 100) : 0;
+            // Calculate missed ATH in USD (how much you would have made if you sold at ATH vs now)
+            // This shows the opportunity cost of not selling at the peak
+            const missedPerToken = athPrice > currentPrice ? athPrice - currentPrice : 0;
+            missedATH = Number(trade.amount) * missedPerToken;
+
             gainLoss = purchasePrice > 0 ? Number(((currentPrice - purchasePrice) / purchasePrice) * 100) : 0;
 
             // Calculate PNL (Profit and Loss in USD)
             pnl = Number(trade.amount) * (Number(currentPrice) - Number(purchasePrice));
 
             // Additional validation: Skip trades with aberrant PNL (> $100k per trade)
+            // This helps filter out corrupted price data while keeping most legitimate trades
             const MAX_PNL_PER_TRADE = 100_000;
             if (Math.abs(pnl) > MAX_PNL_PER_TRADE) {
               logger.warn(
@@ -358,6 +363,7 @@ export async function processAnalysisJobAsync(
               totalVolumeSOL: Number(existing.totalVolumeSOL || 0) + Number(volumeSOL),
               totalMissedATH: Number(existing.totalMissedATH) + Number(missedATH),
               totalGainLoss: Number(existing.totalGainLoss) + Number(gainLoss),
+              totalPnlUSD: Number(existing.totalPnlUSD || 0) + Number(pnl),
               tradeCount: Number(existing.tradeCount) + 1,
               // Track sums for average calculations
               sumPurchaseValue: Number(existing.sumPurchaseValue || 0) + Number(trade.amount) * Number(priceAnalysis?.purchasePrice || 0),
@@ -376,6 +382,7 @@ export async function processAnalysisJobAsync(
               totalVolumeSOL: Number(volumeSOL),
               totalMissedATH: Number(missedATH),
               totalGainLoss: Number(gainLoss),
+              totalPnlUSD: Number(pnl),
               tradeCount: 1,
               // Initialize sums for average calculations
               sumPurchaseValue: Number(trade.amount) * Number(priceAnalysis?.purchasePrice || 0),
@@ -398,30 +405,33 @@ export async function processAnalysisJobAsync(
       // Calculate token distribution (in profit vs in loss)
       let tokensInProfit = 0;
       let tokensInLoss = 0;
-      let bestPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
-      let worstPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+      let bestPerformer: { mint: string; symbol: string | null; pnl_usd: number; volume_sol: number; } | null = null;
+      let worstPerformer: { mint: string; symbol: string | null; pnl_usd: number; volume_sol: number; } | null = null;
 
       tokensMap.forEach((token) => {
-        const pnl = Number(token.totalGainLoss || 0);
-        if (pnl > 0) tokensInProfit++;
-        else if (pnl < 0) tokensInLoss++;
+        const pnlUsd = Number(token.totalPnlUSD || 0);
+        const gainLossPct = Number(token.totalGainLoss || 0);
 
-        // Track best performer
-        if (!bestPerformer || pnl > bestPerformer.pnl_sol) {
+        // Determine profit/loss based on percentage (more reliable than USD for classification)
+        if (gainLossPct > 0) tokensInProfit++;
+        else if (gainLossPct < 0) tokensInLoss++;
+
+        // Track best performer (by PNL in USD)
+        if (!bestPerformer || pnlUsd > bestPerformer.pnl_usd) {
           bestPerformer = {
             mint: token.mint,
             symbol: token.symbol || token.tokenSymbol || null,
-            pnl_sol: pnl,
+            pnl_usd: pnlUsd,
             volume_sol: Number(token.totalVolumeSOL || 0),
           };
         }
 
-        // Track worst performer
-        if (!worstPerformer || pnl < worstPerformer.pnl_sol) {
+        // Track worst performer (by PNL in USD)
+        if (!worstPerformer || pnlUsd < worstPerformer.pnl_usd) {
           worstPerformer = {
             mint: token.mint,
             symbol: token.symbol || token.tokenSymbol || null,
-            pnl_sol: pnl,
+            pnl_usd: pnlUsd,
             volume_sol: Number(token.totalVolumeSOL || 0),
           };
         }
@@ -634,30 +644,33 @@ export async function processIncrementalAnalysisAsync(
     // Recalculate token distribution and performers
     let tokensInProfit = 0;
     let tokensInLoss = 0;
-    let bestPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
-    let worstPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+    let bestPerformer: { mint: string; symbol: string | null; pnl_usd: number; volume_sol: number; } | null = null;
+    let worstPerformer: { mint: string; symbol: string | null; pnl_usd: number; volume_sol: number; } | null = null;
 
     tokens.forEach((token: any) => {
-      const pnl = Number(token.totalGainLoss || 0);
-      if (pnl > 0) tokensInProfit++;
-      else if (pnl < 0) tokensInLoss++;
+      const pnlUsd = Number(token.totalPnlUSD || 0);
+      const gainLossPct = Number(token.totalGainLoss || 0);
 
-      // Track best performer
-      if (!bestPerformer || pnl > bestPerformer.pnl_sol) {
+      // Determine profit/loss based on percentage (more reliable than USD for classification)
+      if (gainLossPct > 0) tokensInProfit++;
+      else if (gainLossPct < 0) tokensInLoss++;
+
+      // Track best performer (by PNL in USD)
+      if (!bestPerformer || pnlUsd > bestPerformer.pnl_usd) {
         bestPerformer = {
           mint: token.mint,
           symbol: token.symbol || null,
-          pnl_sol: pnl,
+          pnl_usd: pnlUsd,
           volume_sol: Number(token.totalVolumeSOL || 0),
         };
       }
 
-      // Track worst performer
-      if (!worstPerformer || pnl < worstPerformer.pnl_sol) {
+      // Track worst performer (by PNL in USD)
+      if (!worstPerformer || pnlUsd < worstPerformer.pnl_usd) {
         worstPerformer = {
           mint: token.mint,
           symbol: token.symbol || null,
-          pnl_sol: pnl,
+          pnl_usd: pnlUsd,
           volume_sol: Number(token.totalVolumeSOL || 0),
         };
       }

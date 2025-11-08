@@ -121,7 +121,8 @@ export const tokenAnalysisResults = sendoAnalyserSchema.table('token_analysis_re
   // Aggregated statistics
   totalVolumeUSD: numeric('total_volume_usd').notNull().default('0'),
   totalVolumeSOL: numeric('total_volume_sol').notNull().default('0'),
-  totalGainLoss: numeric('total_gain_loss').notNull().default('0'),
+  totalGainLoss: numeric('total_gain_loss').notNull().default('0'),  // Sum of percentages per token
+  totalPnlUSD: numeric('total_pnl_usd').notNull().default('0'),      // Actual PNL in USD per token
   totalMissedATH: numeric('total_missed_ath').notNull().default('0'),
   trades: integer('trades').notNull().default(0),
 
