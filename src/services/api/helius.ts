@@ -15,6 +15,7 @@ export interface HeliusService {
     paginationToken?: string;
     hasMore: boolean;
   }>;
+  getTokenMetadataBatch(mints: string[]): Promise<Map<string, { symbol: string | null; name: string | null }>>;
 }
 
 /**
@@ -131,6 +132,55 @@ export function createHeliusService(apiKey: string, requestsPerSecond: number = 
           paginationToken: result.paginationToken || undefined,
           hasMore: !!result.paginationToken
         };
+      });
+    },
+
+    getTokenMetadataBatch: async (mints: string[]) => {
+      // Use Helius DAS API getAssetBatch to fetch metadata for multiple tokens
+      // This is MUCH more efficient than calling Birdeye token_overview for each token
+      // Limit: up to 1000 tokens per request
+
+      return withRateLimit(async () => {
+        const metadataMap = new Map<string, { symbol: string | null; name: string | null }>();
+
+        // Process in batches of 1000 (API limit)
+        for (let i = 0; i < mints.length; i += 1000) {
+          const batch = mints.slice(i, i + 1000);
+
+          try {
+            const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${apiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getAssetBatch',
+                params: {
+                  ids: batch
+                }
+              })
+            });
+
+            const { result } = await response.json();
+
+            if (result && Array.isArray(result)) {
+              result.forEach((asset: any) => {
+                if (asset && asset.id) {
+                  // Extract symbol and name from metadata
+                  const symbol = asset.content?.metadata?.symbol || asset.content?.json_uri?.symbol || null;
+                  const name = asset.content?.metadata?.name || asset.content?.json_uri?.name || null;
+
+                  metadataMap.set(asset.id, { symbol, name });
+                }
+              });
+            }
+          } catch (error) {
+            console.error(`[Helius] getAssetBatch error for batch ${i}-${i + batch.length}:`, error);
+            // Continue to next batch even if this one fails
+          }
+        }
+
+        return metadataMap;
       });
     },
   };
