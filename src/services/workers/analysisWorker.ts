@@ -431,8 +431,17 @@ export async function processAnalysisJobAsync(
       const topPainPoints = Array.from(tokensMap.values())
         .map((token) => {
           const missedUSD = Number(token.totalMissedATH || 0);
-          const athPrice = Number(token.averageAthPrice || 0);
-          const soldPrice = Number(token.averagePurchasePrice || 0);
+
+          // Calculate average ATH price
+          const athPrice = token.tradeCount > 0
+            ? Number(token.sumAthPrice || 0) / token.tradeCount
+            : 0;
+
+          // Calculate weighted average purchase price
+          const sumTokensTraded = Number(token.sumTokensTraded || 0);
+          const soldPrice = sumTokensTraded > 0
+            ? Number(token.sumPurchaseValue || 0) / sumTokensTraded
+            : 0;
 
           // Calculate percentage change from ATH
           // If still held (no sold price), use current price if available, otherwise assume 100% loss
@@ -658,8 +667,17 @@ export async function processIncrementalAnalysisAsync(
     const topPainPoints = tokens
       .map((token: any) => {
         const missedUSD = Number(token.totalMissedATH || 0);
-        const athPrice = Number(token.averageAthPrice || 0);
-        const soldPrice = Number(token.averagePurchasePrice || 0);
+
+        // Recalculate average ATH price from raw sums (in case processNewTransactions updated them)
+        const athPrice = token.trades > 0
+          ? Number(token.sumAthPrice || token.averageAthPrice || 0) / (token.trades || 1)
+          : Number(token.averageAthPrice || 0);
+
+        // Recalculate weighted average purchase price from raw sums
+        const sumTokensTraded = Number(token.sumTokensTraded || 0);
+        const soldPrice = sumTokensTraded > 0
+          ? Number(token.sumPurchaseValue || 0) / sumTokensTraded
+          : Number(token.averagePurchasePrice || 0);
 
         // Calculate percentage change from ATH
         let athChangePct = 0;
