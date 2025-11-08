@@ -95,7 +95,8 @@ export interface TokenAnalysisResult {
   name: string | null;
   totalVolumeUSD: string;
   totalVolumeSOL: string;
-  totalGainLoss: string;
+  totalGainLoss: string;      // Sum of percentages per token
+  totalPnlUSD: string;         // Actual PNL in USD per token
   totalMissedATH: string;
   trades: number;
   averagePurchasePrice: string | null;
