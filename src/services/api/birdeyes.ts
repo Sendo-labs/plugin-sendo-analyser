@@ -102,7 +102,7 @@ export function getBirdeyeService(
             'x-chain': 'solana',
             ...(apiKey && { 'X-API-KEY': apiKey })
           },
-          timeout: 10000
+          timeout: 30000
         });
 
         if (response.data.success && response.data.data.items) {
@@ -179,7 +179,7 @@ export function getBirdeyeService(
                 'Content-Type': 'application/json',
                 ...(apiKey && { 'X-API-KEY': apiKey })
               },
-              timeout: 10000
+              timeout: 30000
             }
           );
 
@@ -219,7 +219,7 @@ export function getBirdeyeService(
             'x-chain': 'solana',
             ...(apiKey && { 'X-API-KEY': apiKey })
           },
-          timeout: 10000
+          timeout: 30000
         });
 
         if (response.data.success && response.data.data) {
