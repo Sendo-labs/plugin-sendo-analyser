@@ -14,8 +14,11 @@ export interface SendoAnalyserConfig {
  * Default configuration values
  */
 export const SENDO_ANALYSER_DEFAULTS = {
-  BIRDEYE_RATE_LIMIT: 1, // 1 request per second by default
-  HELIUS_RATE_LIMIT: 50, // 50 requests per second by default
+  BIRDEYE_RATE_LIMIT: 40, // 80% of 50 RPS (your actual BirdEye limit)
+  BIRDEYE_MAX_RPS: 50,     // Your BirdEye subscription: 50 RPS, 1000 RPM
+  HELIUS_RATE_LIMIT: 160,  // 80% of 200 RPS (your actual Helius limit)
+  HELIUS_MAX_RPS: 200,     // Your Helius subscription: 200 RPS
+  API_USAGE_PERCENT: 80,   // Use 80% of available RPS for safety margin
   BIRDEYE_API_BASE: 'https://public-api.birdeye.so/defi',
   HELIUS_NETWORK: 'mainnet' as const,
 };

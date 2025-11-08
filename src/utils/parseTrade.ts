@@ -144,11 +144,16 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
 
     validParsedTxs.forEach(({ tx, signerTrades }) => {
         const trades = signerTrades.map((tokenTrade) => {
-            const tradeData = {
+            const tradeData: any = {
                 mint: tokenTrade.mint,
                 tokenBalance: tokenTrade,
                 tradeType: tokenTrade.changeType,
-                priceAnalysis: null as any
+                priceAnalysis: null,
+                // Fields expected by analysisWorker
+                tokenSymbol: undefined,
+                volume: 0,
+                missedATH: 0,
+                gainLoss: 0
             };
 
             // Utiliser l'analyse de prix mise en cache pour ce token
@@ -168,6 +173,17 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
                         athTimestamp: priceAnalysis.athTimestamp,
                         priceHistoryPoints: priceAnalysis.priceHistory.length
                     };
+
+                    // Calculate metrics for analysisWorker
+                    const tokenAmount = Math.abs(tokenTrade.uiChange);
+                    const purchasePrice = priceAnalysis.purchasePrice;
+                    const currentPrice = priceAnalysis.currentPrice;
+                    const athPrice = priceAnalysis.athPrice;
+
+                    tradeData.tokenSymbol = priceAnalysis.symbol || undefined;
+                    tradeData.volume = tokenAmount * purchasePrice; // Volume in USD
+                    tradeData.missedATH = athPrice > 0 ? ((athPrice - currentPrice) / athPrice) * 100 : 0;
+                    tradeData.gainLoss = purchasePrice > 0 ? ((currentPrice - purchasePrice) / purchasePrice) * 100 : 0;
                 }
             }
 

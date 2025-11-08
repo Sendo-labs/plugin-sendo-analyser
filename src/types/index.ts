@@ -31,6 +31,14 @@ export type {
   AnalyzeWalletData,
   GetAnalysesData,
   StoredAnalysis,
+  // Async analysis types
+  JobStatus,
+  StartAnalysisRequestBody,
+  StartAnalysisResponse,
+  AnalysisStatusResponse,
+  AnalysisResultsResponse,
+  TokenAnalysisResult,
+  AnalysisSummary,
 } from './api.js';
 
 // Schemas for LLM validation

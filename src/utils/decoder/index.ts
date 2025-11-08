@@ -174,6 +174,37 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
 };
 
 export const decodeTxData = async (tx: any) => {
+    // Guard: vérifier que la transaction a la structure minimale requise
+    if (!tx || !tx.transaction || !tx.transaction.message) {
+        // Retourner une structure vide pour les transactions invalides (skip silencieusement)
+        return {
+            signature: [],
+            recentBlockhash: '',
+            blockTime: 0,
+            fee: 0,
+            error: 'INVALID_STRUCTURE',
+            status: { Err: 'Invalid transaction structure' },
+            accounts: [],
+            decodedInstructions: [],
+            parsed: [],
+            balances: {
+                solBalances: [],
+                tokenBalances: [],
+                signerAddress: '',
+                signerSolBalance: null,
+                signerTokenBalances: [],
+                significantChanges: { solChanges: [], tokenChanges: [] },
+                traders: []
+            },
+            totalInstructions: 0,
+            totalAccountsKeys: 0,
+            totalWritableKeys: 0,
+            totalReadonlyKeys: 0,
+            totalInnerInstructions: 0,
+            successfullyDecoded: 0
+        };
+    }
+
     // Extraire les balances avec le nouveau module
     const balanceAnalysis = await extractBalances(tx);
     const instructions = tx.transaction.message.instructions;
