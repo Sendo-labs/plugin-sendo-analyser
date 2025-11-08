@@ -27,15 +27,16 @@
     }
   },
   "dependencies": {
-    "@elizaos/core": "^1.6.3",
-    "@types/pg": "^8.15.5",
     "@coral-xyz/borsh": "^0.31.1",
+    "@elizaos/core": "^1.6.3",
     "@solana/buffer-layout": "^4.0.1",
     "@solana/buffer-layout-utils": "^0.3.0",
     "@types/bn.js": "^5.2.0",
+    "@types/pg": "^8.15.5",
     "axios": "^1.12.2",
     "bn": "^1.0.5",
     "bn.js": "^5.2.2",
+    "bs58": "^6.0.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.44.6",
     "fix-dts-default-cjs-exports": "^1.0.1",
