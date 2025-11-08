@@ -35,7 +35,8 @@ export const walletAnalysisJobs = sendoAnalyserSchema.table('wallet_analysis_job
 
   // Error handling
   error: text('error'),
-  lastCursor: text('last_cursor'),           // For resuming on error
+  lastSignature: text('last_signature'),     // Last signature processed (for incremental detection)
+  paginationToken: text('pagination_token'), // Helius API pagination token (for resuming pagination)
   retryCount: integer('retry_count').default(0),
 });
 

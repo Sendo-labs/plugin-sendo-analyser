@@ -42,7 +42,7 @@ export async function startAnalysisJob(
       if (job.status === 'completed') {
         // Check for new transactions
         const latest = await heliusService.getSignaturesForAddress(address, { limit: 1 });
-        const hasNew = latest[0]?.signature !== job.lastCursor;
+        const hasNew = latest[0]?.signature !== job.lastSignature;
 
         if (hasNew) {
           // Launch incremental scan
@@ -84,7 +84,7 @@ export async function startAnalysisJob(
 
         if (isZombie) {
           const elapsedMinutes = Math.floor((Date.now() - lastBeat.getTime()) / 1000 / 60);
-          logger.warn(`[StartAnalysisJob] Zombie job detected for ${address} (no heartbeat for ${elapsedMinutes} minutes). Retrying from last cursor...`);
+          logger.warn(`[StartAnalysisJob] Zombie job detected for ${address} (no heartbeat for ${elapsedMinutes} minutes). Retrying from last signature...`);
 
           // Retry from lastCursor instead of deleting (preserve history)
           await db.update(walletAnalysisJobs)

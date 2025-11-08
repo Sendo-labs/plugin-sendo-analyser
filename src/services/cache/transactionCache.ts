@@ -96,10 +96,16 @@ export async function getTransactionsWithCache(
 
   // Step 1: Fetch transactions using NEW getTransactionsForAddress endpoint
   // This replaces getSignaturesForAddress + getTransaction loop (50+ calls → 1 call!)
+  logger.debug(`[GetTransactionsWithCache] Fetching up to ${limit} transactions for ${address.slice(0, 8)}... (cursor: ${before?.slice(0, 8) || 'null'})`);
+
   const { transactions: fetchedTransactions, signatures: fetchedSignatures, paginationToken, hasMore } =
     await heliusService.getTransactionsForAddress(address, limit, before);
 
   if (fetchedTransactions.length === 0) {
+    logger.warn(
+      `[GetTransactionsWithCache] API returned 0 transactions (hasMore=${hasMore}, paginationToken=${paginationToken?.slice(0, 8) || 'null'}) - ` +
+      `this may indicate an API issue or end of history`
+    );
     return {
       transactions: [],
       signatures: [],

@@ -72,7 +72,7 @@ export async function processAnalysisJobAsync(
       logger.error(`[ProcessAnalysisJob] Failed to fetch NFT count:`, error?.message);
     }
 
-    let cursor = job.lastCursor || undefined;
+    let cursor = job.paginationToken || undefined;
     let hasMore = true;
     let batch = job.currentBatch || 0;
     let tokensMap = new Map<string, any>();
@@ -86,6 +86,36 @@ export async function processAnalysisJobAsync(
     let pricedTrades = 0; // Trades for which we successfully fetched price data
     let tradesMissingPrice = 0; // Trades skipped due to price lookup issues
     let firstSignature: string | null = null; // Track the first (most recent) signature
+    let emptyBatchCount = 0; // Track consecutive empty batches to prevent infinite loops
+    const MAX_EMPTY_BATCHES = 5; // Maximum consecutive empty batches before stopping
+
+    // If this is a retry (currentBatch > 0), load existing data from DB to avoid losing progress
+    if (batch > 0) {
+      logger.info(`[ProcessAnalysisJob] Resuming from batch ${batch}, loading existing token data...`);
+
+      try {
+        const { tokens: existingTokens } = await getTokenResults(db, jobId, 1, 10000);
+        tokensMap = new Map(existingTokens.map((t: any) => [t.mint, t]));
+        logger.info(`[ProcessAnalysisJob] Loaded ${tokensMap.size} existing tokens from previous batches`);
+
+        // Restore metrics from currentResults if available
+        if (job.currentResults) {
+          totalTransactions = job.processedSignatures || 0;
+          totalVolumeSOL = Number(job.currentResults.total_volume_sol || 0);
+          totalPNL = Number(job.currentResults.total_pnl || 0);
+          winningTrades = Number(job.currentResults.winning_trades || 0);
+          losingTrades = Number(job.currentResults.losing_trades || 0);
+          totalTrades = Number(job.currentResults.total_trades || 0);
+          pricedTrades = Number(job.currentResults.priced_trades || 0);
+          tradesMissingPrice = Number(job.currentResults.trades_missing_price || 0);
+          totalMissedATH = Number(job.currentResults.total_missed_usd || 0);
+
+          logger.info(`[ProcessAnalysisJob] Restored metrics: ${totalTransactions} txs, ${totalTrades} trades, ${tokensMap.size} tokens`);
+        }
+      } catch (error: any) {
+        logger.warn(`[ProcessAnalysisJob] Failed to load existing data, starting fresh: ${error?.message}`);
+      }
+    }
 
     // Loop through batches
     while (hasMore) {
@@ -119,6 +149,20 @@ export async function processAnalysisJobAsync(
 
       // Count transactions
       totalTransactions += result.transactions.length;
+
+      // Detect infinite loops: if we get multiple consecutive empty batches, stop
+      if (result.transactions.length === 0) {
+        emptyBatchCount++;
+        logger.warn(`[ProcessAnalysisJob] Empty batch ${batch} (${emptyBatchCount}/${MAX_EMPTY_BATCHES}) - hasMore=${result.hasMore}, cursor=${cursor?.slice(0, 8) || 'null'}`);
+
+        if (emptyBatchCount >= MAX_EMPTY_BATCHES) {
+          logger.error(`[ProcessAnalysisJob] Stopping after ${MAX_EMPTY_BATCHES} consecutive empty batches - possible API issue or invalid cursor`);
+          break;
+        }
+      } else {
+        // Reset counter on successful batch
+        emptyBatchCount = 0;
+      }
 
       // Collect all unique mints with their timestamps for batch price analysis
       const mintsToAnalyze = new Map<string, { mint: string; timestamp: number; trades: any[] }>();
@@ -350,6 +394,71 @@ export async function processAnalysisJobAsync(
 
       // Light summary calculated from tokensMap (updated after each batch)
       const successRate = pricedTrades > 0 ? Number(((winningTrades / pricedTrades) * 100).toFixed(2)) : 0;
+
+      // Calculate token distribution (in profit vs in loss)
+      let tokensInProfit = 0;
+      let tokensInLoss = 0;
+      let bestPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+      let worstPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+
+      tokensMap.forEach((token) => {
+        const pnl = Number(token.totalGainLoss || 0);
+        if (pnl > 0) tokensInProfit++;
+        else if (pnl < 0) tokensInLoss++;
+
+        // Track best performer
+        if (!bestPerformer || pnl > bestPerformer.pnl_sol) {
+          bestPerformer = {
+            mint: token.mint,
+            symbol: token.symbol || token.tokenSymbol || null,
+            pnl_sol: pnl,
+            volume_sol: Number(token.totalVolumeSOL || 0),
+          };
+        }
+
+        // Track worst performer
+        if (!worstPerformer || pnl < worstPerformer.pnl_sol) {
+          worstPerformer = {
+            mint: token.mint,
+            symbol: token.symbol || token.tokenSymbol || null,
+            pnl_sol: pnl,
+            volume_sol: Number(token.totalVolumeSOL || 0),
+          };
+        }
+      });
+
+      // Calculate top 3 pain points (tokens with highest missed gains at ATH)
+      const topPainPoints = Array.from(tokensMap.values())
+        .map((token) => {
+          const missedUSD = Number(token.totalMissedATH || 0);
+          const athPrice = Number(token.averageAthPrice || 0);
+          const soldPrice = Number(token.averagePurchasePrice || 0);
+
+          // Calculate percentage change from ATH
+          // If still held (no sold price), use current price if available, otherwise assume 100% loss
+          let athChangePct = 0;
+          if (athPrice > 0) {
+            if (soldPrice > 0) {
+              athChangePct = ((soldPrice - athPrice) / athPrice) * 100;
+            } else {
+              // Token still held, we don't have current price, so we can't calculate the exact %
+              // For now, leave it at 0 or we could mark it as N/A
+              athChangePct = 0;
+            }
+          }
+
+          return {
+            mint: token.mint,
+            symbol: token.symbol || token.tokenSymbol || null,
+            missed_usd: missedUSD,
+            ath_price: athPrice,
+            sold_price: soldPrice > 0 ? soldPrice : null,
+            ath_change_pct: athChangePct,
+          };
+        })
+        .sort((a, b) => b.missed_usd - a.missed_usd)
+        .slice(0, 3);
+
       const lightSummary = {
         total_missed_usd: totalMissedATH,
         total_volume_sol: totalVolumeSOL,
@@ -362,7 +471,12 @@ export async function processAnalysisJobAsync(
         trades_missing_price: tradesMissingPrice,
         tokens_discovered: tokensMap.size,
         total_transactions: totalTransactions,
-        nft_count: nftCount // Available from the start
+        nft_count: nftCount, // Available from the start
+        tokens_in_profit: tokensInProfit,
+        tokens_in_loss: tokensInLoss,
+        best_performer: bestPerformer,
+        worst_performer: worstPerformer,
+        top_pain_points: topPainPoints,
       };
 
       logger.info(
@@ -373,16 +487,18 @@ export async function processAnalysisJobAsync(
       );
 
       // Always save the last signature processed (never null, to avoid incremental reprocessing)
+      // Preserve existing lastSignature if current batch has no signatures
       const lastSignature = result.signatures.length > 0
         ? result.signatures[result.signatures.length - 1]
-        : cursor;
+        : (cursor || job.lastSignature);
 
       await db.update(walletAnalysisJobs)
         .set({
           processedSignatures: totalTransactions,
           currentBatch: batch,
           currentResults: serializeBigInt(lightSummary),
-          lastCursor: lastSignature
+          lastSignature: lastSignature,
+          paginationToken: result.paginationToken  // Save for retry/continuation
         })
         .where(eq(walletAnalysisJobs.id, jobId));
 
@@ -393,13 +509,30 @@ export async function processAnalysisJobAsync(
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    // Validate results before marking as completed
+    // Don't mark as completed if we have 0 transactions (likely an error)
+    if (totalTransactions === 0 && batch > 1) {
+      const errorMsg = `No transactions processed after ${batch} batches - likely API issue or invalid cursor`;
+      logger.error(`[ProcessAnalysisJob] ${errorMsg}`);
+
+      await db.update(walletAnalysisJobs)
+        .set({
+          status: 'failed',
+          error: errorMsg
+        })
+        .where(eq(walletAnalysisJobs.id, jobId));
+
+      throw new Error(errorMsg);
+    }
+
     // Analysis completed - save the first signature (most recent) for incremental detection
     await db.update(walletAnalysisJobs)
       .set({
         status: 'completed',
         completedAt: new Date(),
         totalSignatures: totalTransactions,
-        lastCursor: firstSignature  // Save the first (most recent) signature
+        lastSignature: firstSignature,  // Save the first (most recent) signature
+        paginationToken: null  // Clear pagination token (analysis is complete)
       })
       .where(eq(walletAnalysisJobs.id, jobId));
 
@@ -456,7 +589,7 @@ export async function processIncrementalAnalysisAsync(
     let cursor = undefined;
     let hasMore = true;
     let newTransactionsCount = 0;
-    const lastCachedSig = job.lastCursor;
+    const lastCachedSig = job.lastSignature;
 
     while (hasMore) {
       const result = await getTransactionsWithCache(db, heliusService, job.walletAddress, 25, cursor);
@@ -489,6 +622,67 @@ export async function processIncrementalAnalysisAsync(
     const tokens = Array.from(cachedTokens.values());
     const existingSummary = job.currentResults || {};
 
+    // Recalculate token distribution and performers
+    let tokensInProfit = 0;
+    let tokensInLoss = 0;
+    let bestPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+    let worstPerformer: { mint: string; symbol: string | null; pnl_sol: number; volume_sol: number; } | null = null;
+
+    tokens.forEach((token: any) => {
+      const pnl = Number(token.totalGainLoss || 0);
+      if (pnl > 0) tokensInProfit++;
+      else if (pnl < 0) tokensInLoss++;
+
+      // Track best performer
+      if (!bestPerformer || pnl > bestPerformer.pnl_sol) {
+        bestPerformer = {
+          mint: token.mint,
+          symbol: token.symbol || null,
+          pnl_sol: pnl,
+          volume_sol: Number(token.totalVolumeSOL || 0),
+        };
+      }
+
+      // Track worst performer
+      if (!worstPerformer || pnl < worstPerformer.pnl_sol) {
+        worstPerformer = {
+          mint: token.mint,
+          symbol: token.symbol || null,
+          pnl_sol: pnl,
+          volume_sol: Number(token.totalVolumeSOL || 0),
+        };
+      }
+    });
+
+    // Calculate top 3 pain points (tokens with highest missed gains at ATH)
+    const topPainPoints = tokens
+      .map((token: any) => {
+        const missedUSD = Number(token.totalMissedATH || 0);
+        const athPrice = Number(token.averageAthPrice || 0);
+        const soldPrice = Number(token.averagePurchasePrice || 0);
+
+        // Calculate percentage change from ATH
+        let athChangePct = 0;
+        if (athPrice > 0) {
+          if (soldPrice > 0) {
+            athChangePct = ((soldPrice - athPrice) / athPrice) * 100;
+          } else {
+            athChangePct = 0;
+          }
+        }
+
+        return {
+          mint: token.mint,
+          symbol: token.symbol || null,
+          missed_usd: missedUSD,
+          ath_price: athPrice,
+          sold_price: soldPrice > 0 ? soldPrice : null,
+          ath_change_pct: athChangePct,
+        };
+      })
+      .sort((a: any, b: any) => b.missed_usd - a.missed_usd)
+      .slice(0, 3);
+
     const updatedSummary = {
       total_missed_usd: tokens.reduce((sum, t) => Number(sum) + Number(t.totalMissedATH || 0), 0),
       total_volume_sol: existingSummary.total_volume_sol || 0,  // Preserve from full analysis
@@ -497,9 +691,16 @@ export async function processIncrementalAnalysisAsync(
       winning_trades: existingSummary.winning_trades || 0,  // Preserve from full analysis
       losing_trades: existingSummary.losing_trades || 0,  // Preserve from full analysis
       total_trades: existingSummary.total_trades || 0,  // Preserve from full analysis
+      priced_trades: existingSummary.priced_trades || 0,  // Preserve from full analysis
+      trades_missing_price: existingSummary.trades_missing_price || 0,  // Preserve from full analysis
       tokens_discovered: tokens.length,
       total_transactions: (job.processedSignatures || 0) + newTransactionsCount,
-      nft_count: existingSummary.nft_count || 0  // Preserve from full analysis
+      nft_count: existingSummary.nft_count || 0,  // Preserve from full analysis
+      tokens_in_profit: tokensInProfit,
+      tokens_in_loss: tokensInLoss,
+      best_performer: bestPerformer,
+      worst_performer: worstPerformer,
+      top_pain_points: topPainPoints,
     };
 
     // Update job
@@ -510,7 +711,7 @@ export async function processIncrementalAnalysisAsync(
         currentResults: serializeBigInt(updatedSummary),
         processedSignatures: (job.processedSignatures || 0) + newTransactionsCount,
         totalSignatures: (job.processedSignatures || 0) + newTransactionsCount,
-        lastCursor: latestSignature
+        lastSignature: latestSignature
       })
       .where(eq(walletAnalysisJobs.id, jobId));
 

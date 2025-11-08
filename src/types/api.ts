@@ -105,6 +105,24 @@ export interface TokenAnalysisResult {
   updatedAt: string;
 }
 
+// Best/Worst performer stats
+export interface PerformerStats {
+  mint: string;
+  symbol: string | null;
+  pnl_sol: number;
+  volume_sol: number;
+}
+
+// Top pain point stats
+export interface PainPointStats {
+  mint: string;
+  symbol: string | null;
+  missed_usd: number;
+  ath_price: number;
+  sold_price: number | null;
+  ath_change_pct: number;
+}
+
 // Summary stats from analysis
 export interface AnalysisSummary {
   total_missed_usd: number;
@@ -119,6 +137,14 @@ export interface AnalysisSummary {
   tokens_discovered: number;
   total_transactions: number;
   nft_count: number;
+  // Token distribution stats
+  tokens_in_profit: number;
+  tokens_in_loss: number;
+  // Best/Worst performers
+  best_performer: PerformerStats | null;
+  worst_performer: PerformerStats | null;
+  // Top 3 pain points (tokens with highest missed gains at ATH)
+  top_pain_points: PainPointStats[];
 }
 
 // GET /analysis/:address/results - Get paginated tokens
