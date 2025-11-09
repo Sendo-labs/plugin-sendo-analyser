@@ -180,7 +180,7 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
                     const currentPrice = priceAnalysis.currentPrice;
                     const athPrice = priceAnalysis.athPrice;
 
-                    tradeData.tokenSymbol = priceAnalysis.symbol || undefined;
+                    // Note: tokenSymbol should be enriched separately via Helius metadata
                     tradeData.volume = tokenAmount * purchasePrice; // Volume in USD
                     tradeData.missedATH = athPrice > 0 ? ((athPrice - currentPrice) / athPrice) * 100 : 0;
                     tradeData.gainLoss = purchasePrice > 0 ? ((currentPrice - purchasePrice) / purchasePrice) * 100 : 0;

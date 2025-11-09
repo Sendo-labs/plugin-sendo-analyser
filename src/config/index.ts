@@ -8,7 +8,16 @@ export interface SendoAnalyserConfig {
   birdeyeApiKey?: string;
   birdeyeRateLimit?: number; // requests per second
   heliusRateLimit?: number; // requests per second
+  birdeyePriceTimeframe?: BirdEyeTimeframe; // historical price data granularity
 }
+
+/**
+ * BirdEye API Timeframe options for historical price data
+ * - 1m, 5m, 15m, 30m: High precision but requires many API calls for long periods
+ * - 1H, 4H: Balanced precision and API efficiency
+ * - 1D: Best API efficiency (1000 days per request) - RECOMMENDED for ATH detection
+ */
+export type BirdEyeTimeframe = '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D';
 
 /**
  * Default configuration values
@@ -21,6 +30,9 @@ export const SENDO_ANALYSER_DEFAULTS = {
   API_USAGE_PERCENT: 80,   // Use 80% of available RPS for safety margin
   BIRDEYE_API_BASE: 'https://public-api.birdeye.so/defi',
   HELIUS_NETWORK: 'mainnet' as const,
+  // Price history timeframe: '1D' = daily candles (best for ATH, ~1 API call per year of data)
+  // Alternative: '1H' = hourly (more precise but ~9 API calls per year)
+  BIRDEYE_PRICE_TIMEFRAME: '1D' as BirdEyeTimeframe,
 };
 
 /**
@@ -39,12 +51,14 @@ export function getSendoAnalyserConfig(runtime: IAgentRuntime): SendoAnalyserCon
   const birdeyeApiKey = runtime.getSetting('BIRDEYE_API_KEY') as string;
   const birdeyeRateLimit = parseInt(runtime.getSetting('BIRDEYE_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT));
   const heliusRateLimit = parseInt(runtime.getSetting('HELIUS_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT));
+  const birdeyePriceTimeframe = (runtime.getSetting('BIRDEYE_PRICE_TIMEFRAME') as BirdEyeTimeframe) || SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME;
 
   return {
     heliusApiKey,
     birdeyeApiKey: birdeyeApiKey || undefined,
     birdeyeRateLimit: birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT,
     heliusRateLimit: heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT,
+    birdeyePriceTimeframe: birdeyePriceTimeframe || SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME,
   };
 }
 

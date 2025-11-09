@@ -44,15 +44,14 @@ export interface BirdeyeService {
 
   getPriceAnalysis(
     mint: string,
-    purchaseTimestamp: number
+    purchaseTimestamp: number,
+    timeframe?: '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D'
   ): Promise<{
     purchasePrice: number;
     currentPrice: number;
     athPrice: number;
     athTimestamp: number;
     priceHistory: BirdEyePriceData[];
-    symbol: string | null;
-    name: string | null;
   } | null>;
 }
 
@@ -207,49 +206,20 @@ export function getBirdeyeService(
   };
 
   /**
-   * Get token metadata (symbol, name) from BirdEye
-   */
-  const getTokenMetadata = async (mint: string) => {
-    return dynamicLimiter.schedule(async () => {
-      try {
-        const response = await axios.get(`https://public-api.birdeye.so/defi/token_overview`, {
-          params: { address: mint },
-          headers: {
-            'accept': 'application/json',
-            'x-chain': 'solana',
-            ...(apiKey && { 'X-API-KEY': apiKey })
-          },
-          timeout: 30000
-        });
-
-        if (response.data.success && response.data.data) {
-          return {
-            symbol: response.data.data.symbol || null,
-            name: response.data.data.name || null
-          };
-        }
-        return { symbol: null, name: null };
-      } catch (error) {
-        console.error(`BirdEye metadata error for ${mint}:`, axios.isAxiosError(error) ? `${error.response?.status} - ${error.message}` : (error instanceof Error ? error.message : String(error)));
-        return { symbol: null, name: null };
-      }
-    });
-  };
-
-  /**
    * Analyze price from purchase to now and compute ATH.
+   * Note: Metadata (symbol, name) should now be fetched via Helius getTokenMetadataBatch
+   * for better performance (batch request vs individual calls)
    */
   const getPriceAnalysis = async (
     mint: string,
-    purchaseTimestamp: number
+    purchaseTimestamp: number,
+    timeframe?: '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D'
   ) => {
     const now = Math.floor(Date.now() / 1000);
 
-    // Fetch metadata and price history in parallel
-    const [metadata, priceHistory] = await Promise.all([
-      getTokenMetadata(mint),
-      getFullHistoricalPrices(mint, purchaseTimestamp, now, '1H')
-    ]);
+    // Fetch only price history (metadata is now fetched via Helius batch API)
+    // Default to '1D' for best API efficiency (1000 days per request)
+    const priceHistory = await getFullHistoricalPrices(mint, purchaseTimestamp, now, timeframe || '1D');
 
     if (!priceHistory.length) return null;
 
@@ -271,9 +241,7 @@ export function getBirdeyeService(
       currentPrice,
       athPrice,
       athTimestamp,
-      priceHistory,
-      symbol: metadata.symbol,
-      name: metadata.name
+      priceHistory
     };
   };
 

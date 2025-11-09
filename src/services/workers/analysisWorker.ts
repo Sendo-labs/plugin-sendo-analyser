@@ -5,6 +5,7 @@ import { getTransactionsWithCache } from '../cache/transactionCache';
 import { processNewTransactions } from './workerHelpers';
 import { serializeBigInt } from '../../utils/serializeBigInt';
 import { upsertTokenResults, getTokenResults } from '../analysis/tokenResults';
+import { SENDO_ANALYSER_DEFAULTS } from '../../config/index.js';
 import type { HeliusService } from '../api/helius';
 import type { BirdeyeService } from '../api/birdeyes';
 
@@ -186,7 +187,21 @@ export async function processAnalysisJobAsync(
         });
       });
 
-      // Fetch price analysis for all unique mints in parallel with per-token timeout
+      // Step 1: Batch-fetch metadata with Helius (MUCH more efficient than Birdeye!)
+      // Extract unique mints from all trades
+      const uniqueMints = Array.from(new Set(Array.from(mintsToAnalyze.values()).map(({ mint }) => mint)));
+      logger.info(`[ProcessAnalysisJob] Batch-fetching metadata for ${uniqueMints.length} tokens via Helius...`);
+
+      let metadataMap = new Map<string, { symbol: string | null; name: string | null }>();
+      try {
+        metadataMap = await heliusService.getTokenMetadataBatch(uniqueMints);
+        logger.info(`[ProcessAnalysisJob] Successfully fetched metadata for ${metadataMap.size}/${uniqueMints.length} tokens`);
+      } catch (error: any) {
+        logger.warn(`[ProcessAnalysisJob] Failed to batch-fetch metadata:`, error?.message || String(error));
+        // Continue without metadata - will use fallback
+      }
+
+      // Step 2: Fetch price history from Birdeye (prices only, no metadata)
       // Use Promise.allSettled to handle individual failures gracefully
       // Calculate dynamic timeout based on:
       // - Number of active jobs (fair sharing)
@@ -200,11 +215,13 @@ export async function processAnalysisJobAsync(
       const priceAnalysesPromises = Array.from(mintsToAnalyze.values()).map(async ({ mint, timestamp }) => {
         try {
           // Use dynamic timeout that adapts to current load and batch size
+          // Use configured timeframe from SENDO_ANALYSER_DEFAULTS (default: '1D' for best API efficiency)
           const analysis = await withTimeout(
-            cachedBirdeyeService.getPriceAnalysis(mint, timestamp),
+            cachedBirdeyeService.getPriceAnalysis(mint, timestamp, SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME),
             dynamicTimeout,
             `Price timeout for ${mint.slice(0, 8)}`
           );
+
           return { mint, timestamp, analysis };
         } catch (error: any) {
           logger.warn(`[ProcessAnalysisJob] Skipping price for ${mint.slice(0, 8)}... (${error?.message || String(error)})`);
@@ -281,8 +298,11 @@ export async function processAnalysisJobAsync(
           let missedATH = 0;
           let gainLoss = 0;
           let pnl = 0;
-          let symbol = trade.tokenSymbol;
-          let name = null;
+
+          // Get metadata from Helius (batch-fetched earlier)
+          const metadata = metadataMap.get(trade.mint);
+          let symbol = metadata?.symbol || trade.tokenSymbol;
+          let name = metadata?.name || null;
 
           if (!priceAnalysis) {
             tradesMissingPrice++;
@@ -290,8 +310,6 @@ export async function processAnalysisJobAsync(
 
           if (priceAnalysis) {
             const { purchasePrice, currentPrice, athPrice } = priceAnalysis;
-            symbol = priceAnalysis.symbol || trade.tokenSymbol;
-            name = priceAnalysis.name;  // Store full token name
 
             // Calculate USD volume for this trade
             volume = Number(trade.amount) * Number(purchasePrice);
