@@ -2,10 +2,10 @@ import { eq } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
 import { walletAnalysisJobs } from '../../schemas/wallet-analysis';
 import { getTransactionsWithCache } from '../cache/transactionCache';
+import { batchFetchPricesOptimized } from '../cache/priceCache';
 import { processNewTransactions } from './workerHelpers';
 import { serializeBigInt } from '../../utils/serializeBigInt';
 import { upsertTokenResults, getTokenResults } from '../analysis/tokenResults';
-import { SENDO_ANALYSER_DEFAULTS } from '../../config/index.js';
 import type { HeliusService } from '../api/helius';
 import type { BirdeyeService } from '../api/birdeyes';
 
@@ -56,12 +56,18 @@ export async function processAnalysisJobAsync(
       return;
     }
 
-    // Mark as processing
+    // Mark as processing (only update startedAt if not already set - preserve for crash recovery)
+    const updateData: any = { status: 'processing' };
+    if (!job.startedAt) {
+      updateData.startedAt = new Date();
+    }
+
     await db.update(walletAnalysisJobs)
-      .set({ status: 'processing', startedAt: new Date() })
+      .set(updateData)
       .where(eq(walletAnalysisJobs.id, jobId));
 
-    logger.info(`[ProcessAnalysisJob] Starting analysis for ${job.walletAddress}`);
+    const isResume = job.currentBatch && job.currentBatch > 0;
+    logger.info(`[ProcessAnalysisJob] ${isResume ? 'Resuming' : 'Starting'} analysis for ${job.walletAddress}${isResume ? ` from batch ${job.currentBatch}` : ''}`);
 
     // Fetch NFT count at the start (snapshot of current holdings)
     let nftCount = 0;
@@ -96,7 +102,29 @@ export async function processAnalysisJobAsync(
 
       try {
         const { tokens: existingTokens } = await getTokenResults(db, jobId, 1, 10000);
-        tokensMap = new Map(existingTokens.map((t: any) => [t.mint, t]));
+
+        // Map DB fields directly to in-memory tokensMap format
+        // DB now stores all cumulative sums needed for accurate incremental calculations!
+        tokensMap = new Map(existingTokens.map((t: any) => [t.mint, {
+          mint: t.mint,
+          symbol: t.symbol,
+          name: t.name,
+          tokenSymbol: t.symbol,
+          totalVolumeUSD: Number(t.totalVolumeUSD || 0),
+          totalVolumeSOL: Number(t.totalVolumeSOL || 0),
+          totalMissedATH: Number(t.totalMissedATH || 0),
+          totalGainLoss: Number(t.totalGainLoss || 0),
+          totalPnlUSD: Number(t.totalPnlUSD || 0),
+          tradeCount: Number(t.trades || 0),
+          // Load cumulative sums directly from DB (no complex reconstruction needed!)
+          sumAthPrice: Number(t.sumAthPrice || 0),
+          sumPurchaseValue: Number(t.sumPurchaseValue || 0),
+          sumTokensTraded: Number(t.sumTokensTraded || 0),
+          totalTokensTraded: Number(t.totalTokensTraded || 0),
+          tradesMissingPrice: 0, // Will be recounted in new batches
+          pricedTrades: Number(t.trades || 0), // All loaded trades had prices
+        }]));
+
         logger.info(`[ProcessAnalysisJob] Loaded ${tokensMap.size} existing tokens from previous batches`);
 
         // Restore metrics from currentResults if available
@@ -122,11 +150,6 @@ export async function processAnalysisJobAsync(
     while (hasMore) {
       batch++;
       logger.info(`[ProcessAnalysisJob] Processing batch ${batch} for ${job.walletAddress}`);
-
-      // Update heartbeat to show we're alive
-      await db.update(walletAnalysisJobs)
-        .set({ lastHeartbeat: new Date() })
-        .where(eq(walletAnalysisJobs.id, jobId));
 
       // Fetch batch with cache layer with timeout (returns lightweight { signature, blockTime, trades })
       // Dynamic batch size based on number of active jobs for fair sharing
@@ -201,57 +224,25 @@ export async function processAnalysisJobAsync(
         // Continue without metadata - will use fallback
       }
 
-      // Step 2: Fetch price history from Birdeye (prices only, no metadata)
-      // Use Promise.allSettled to handle individual failures gracefully
-      // Calculate dynamic timeout based on:
-      // - Number of active jobs (fair sharing)
-      // - Number of tokens in this batch
-      // - Safety margin for API latency
-      const tokensCount = mintsToAnalyze.size;
-      const baseTimeout = (cachedBirdeyeService as any).getRecommendedTimeout?.(tokensCount) || 10000;
-      // Add extra safety margin: minimum 15s, or 3s per token (whichever is higher)
-      const dynamicTimeout = Math.max(15000, baseTimeout, tokensCount * 3000);
+      // Step 2: Fetch price data using OPTIMIZED batch function with multi_price
+      // This intelligently uses cache and batches current price fetches via multi_price API
+      const tokensToFetch = Array.from(mintsToAnalyze.values()).map(({ mint, timestamp }) => ({
+        mint,
+        timestamp
+      }));
 
-      const priceAnalysesPromises = Array.from(mintsToAnalyze.values()).map(async ({ mint, timestamp }) => {
-        try {
-          // Use dynamic timeout that adapts to current load and batch size
-          // Use configured timeframe from SENDO_ANALYSER_DEFAULTS (default: '1D' for best API efficiency)
-          const analysis = await withTimeout(
-            cachedBirdeyeService.getPriceAnalysis(mint, timestamp, SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME),
-            dynamicTimeout,
-            `Price timeout for ${mint.slice(0, 8)}`
-          );
+      logger.info(`[ProcessAnalysisJob] Batch-fetching prices for ${tokensToFetch.length} unique token-timestamps...`);
 
-          return { mint, timestamp, analysis };
-        } catch (error: any) {
-          logger.warn(`[ProcessAnalysisJob] Skipping price for ${mint.slice(0, 8)}... (${error?.message || String(error)})`);
-          return { mint, timestamp, analysis: null };
-        }
-      });
+      let priceMap = new Map<string, any>();
+      try {
+        // batchFetchPricesOptimized already returns Map with "mint-timestampHour" keys
+        priceMap = await batchFetchPricesOptimized(db, cachedBirdeyeService, tokensToFetch);
 
-      // Wait for all promises (successful or failed)
-      const priceAnalysesResults = await Promise.allSettled(priceAnalysesPromises);
-
-      // Extract results (both successful and failed)
-      const priceAnalyses = priceAnalysesResults.map((result) => {
-        if (result.status === 'fulfilled') {
-          return result.value;
-        } else {
-          // Should rarely happen since we catch errors above
-          logger.warn(`[ProcessAnalysisJob] Unexpected promise rejection:`, result.reason);
-          return { mint: '', timestamp: 0, analysis: null };
-        }
-      });
-
-      // Create price map for quick lookup
-      const priceMap = new Map<string, any>();
-      priceAnalyses.forEach(({ mint, timestamp, analysis }) => {
-        if (analysis) {
-          const timestampHour = Math.floor(timestamp / 3600) * 3600;
-          const key = `${mint}-${timestampHour}`;
-          priceMap.set(key, analysis);
-        }
-      });
+        logger.info(`[ProcessAnalysisJob] Successfully fetched ${priceMap.size}/${tokensToFetch.length} price analyses`);
+      } catch (error: any) {
+        logger.error(`[ProcessAnalysisJob] Batch price fetch failed:`, error?.message || String(error));
+        // Continue with empty priceMap - trades will be counted but without price data
+      }
 
       // Calculate SOL volume from transaction balance changes
       result.transactions.forEach((tx: any) => {
@@ -306,6 +297,10 @@ export async function processAnalysisJobAsync(
 
           if (!priceAnalysis) {
             tradesMissingPrice++;
+            logger.warn(
+              `[ProcessAnalysisJob] Missing price for ${symbol || trade.mint.slice(0, 8)} ` +
+              `(key: ${key}, timestamp: ${new Date(blockTime * 1000).toISOString()}) - SKIPPING trade`
+            );
           }
 
           if (priceAnalysis) {
@@ -384,9 +379,10 @@ export async function processAnalysisJobAsync(
               totalPnlUSD: Number(existing.totalPnlUSD || 0) + Number(pnl),
               tradeCount: Number(existing.tradeCount) + 1,
               // Track sums for average calculations
-              sumPurchaseValue: Number(existing.sumPurchaseValue || 0) + Number(trade.amount) * Number(priceAnalysis?.purchasePrice || 0),
+              sumPurchaseValue: Number(existing.sumPurchaseValue || 0) + (priceAnalysis ? Number(trade.amount) * Number(priceAnalysis.purchasePrice) : 0),
+              sumTradeValue: Number(existing.sumTradeValue || 0) + (priceAnalysis ? Number(trade.amount) * Number(priceAnalysis.currentPrice) : 0),
               sumTokensTraded: Number(existing.sumTokensTraded || 0) + (priceAnalysis ? Number(trade.amount) : 0),
-              sumAthPrice: Number(existing.sumAthPrice || 0) + Number(priceAnalysis?.athPrice || 0),
+              sumAthPrice: Number(existing.sumAthPrice || 0) + (priceAnalysis ? Number(priceAnalysis.athPrice) : 0),
               totalTokensTraded: Number(existing.totalTokensTraded || 0) + Number(trade.amount),
               tradesMissingPrice: Number(existing.tradesMissingPrice || 0) + (priceAnalysis ? 0 : 1),
               pricedTrades: Number(existing.pricedTrades || 0) + (priceAnalysis ? 1 : 0),
@@ -403,9 +399,10 @@ export async function processAnalysisJobAsync(
               totalPnlUSD: Number(pnl),
               tradeCount: 1,
               // Initialize sums for average calculations
-              sumPurchaseValue: Number(trade.amount) * Number(priceAnalysis?.purchasePrice || 0),
+              sumPurchaseValue: priceAnalysis ? Number(trade.amount) * Number(priceAnalysis.purchasePrice) : 0,
+              sumTradeValue: priceAnalysis ? Number(trade.amount) * Number(priceAnalysis.currentPrice) : 0,
               sumTokensTraded: priceAnalysis ? Number(trade.amount) : 0,
-              sumAthPrice: Number(priceAnalysis?.athPrice || 0),
+              sumAthPrice: priceAnalysis ? Number(priceAnalysis.athPrice) : 0,
               totalTokensTraded: Number(trade.amount),
               tradesMissingPrice: priceAnalysis ? 0 : 1,
               pricedTrades: priceAnalysis ? 1 : 0,
@@ -413,9 +410,6 @@ export async function processAnalysisJobAsync(
           }
         });
       });
-
-      // Write tokens to token_analysis_results (incremental updates)
-      await upsertTokenResults(db, jobId, tokensMap);
 
       // Light summary calculated from tokensMap (updated after each batch)
       const successRate = pricedTrades > 0 ? Number(((winningTrades / pricedTrades) * 100).toFixed(2)) : 0;
@@ -460,28 +454,22 @@ export async function processAnalysisJobAsync(
         .map((token) => {
           const missedUSD = Number(token.totalMissedATH || 0);
 
-          // Calculate average ATH price
+          // Calculate average ATH price from cumulative sums
           const athPrice = token.tradeCount > 0
             ? Number(token.sumAthPrice || 0) / token.tradeCount
             : 0;
 
-          // Calculate weighted average purchase price
+          // Calculate weighted average trade price (price at moment of each trade)
           const sumTokensTraded = Number(token.sumTokensTraded || 0);
-          const soldPrice = sumTokensTraded > 0
-            ? Number(token.sumPurchaseValue || 0) / sumTokensTraded
+          const tradePrice = sumTokensTraded > 0
+            ? Number(token.sumTradeValue || 0) / sumTokensTraded
             : 0;
 
-          // Calculate percentage change from ATH
-          // If still held (no sold price), use current price if available, otherwise assume 100% loss
+          // Calculate percentage change from ATH to average trade price
+          // Shows if user traded well (close to ATH) or poorly (far below ATH)
           let athChangePct = 0;
-          if (athPrice > 0) {
-            if (soldPrice > 0) {
-              athChangePct = ((soldPrice - athPrice) / athPrice) * 100;
-            } else {
-              // Token still held, we don't have current price, so we can't calculate the exact %
-              // For now, leave it at 0 or we could mark it as N/A
-              athChangePct = 0;
-            }
+          if (athPrice > 0 && tradePrice > 0) {
+            athChangePct = ((tradePrice - athPrice) / athPrice) * 100;
           }
 
           return {
@@ -489,7 +477,7 @@ export async function processAnalysisJobAsync(
             symbol: token.symbol || token.tokenSymbol || null,
             missed_usd: missedUSD,
             ath_price: athPrice,
-            sold_price: soldPrice > 0 ? soldPrice : null,
+            trade_price: tradePrice > 0 ? tradePrice : null,
             ath_change_pct: athChangePct,
           };
         })
@@ -529,15 +517,25 @@ export async function processAnalysisJobAsync(
         ? result.signatures[result.signatures.length - 1]
         : (cursor || job.lastSignature);
 
-      await db.update(walletAnalysisJobs)
-        .set({
-          processedSignatures: totalTransactions,
-          currentBatch: batch,
-          currentResults: serializeBigInt(lightSummary),
-          lastSignature: lastSignature,
-          paginationToken: result.paginationToken  // Save for retry/continuation
-        })
-        .where(eq(walletAnalysisJobs.id, jobId));
+      logger.info(`[ProcessAnalysisJob] Checkpoint at batch ${batch} (${tokensMap.size} tokens, ${totalTransactions} txs)`);
+
+      // Atomic transaction: save everything at each batch (simple & safe)
+      await db.transaction(async (tx: any) => {
+        // Save tokens (critical data)
+        await upsertTokenResults(tx, jobId, tokensMap);
+
+        // Save job metadata (progress, results, heartbeat)
+        await tx.update(walletAnalysisJobs)
+          .set({
+            processedSignatures: totalTransactions,
+            currentBatch: batch,
+            currentResults: serializeBigInt(lightSummary),
+            lastSignature: lastSignature,
+            paginationToken: result.paginationToken,
+            lastHeartbeat: new Date()
+          })
+          .where(eq(walletAnalysisJobs.id, jobId));
+      });
 
       hasMore = result.hasMore;
       cursor = result.paginationToken;
@@ -562,16 +560,24 @@ export async function processAnalysisJobAsync(
       throw new Error(errorMsg);
     }
 
-    // Analysis completed - save the first signature (most recent) for incremental detection
-    await db.update(walletAnalysisJobs)
-      .set({
-        status: 'completed',
-        completedAt: new Date(),
-        totalSignatures: totalTransactions,
-        lastSignature: firstSignature,  // Save the first (most recent) signature
-        paginationToken: null  // Clear pagination token (analysis is complete)
-      })
-      .where(eq(walletAnalysisJobs.id, jobId));
+    // Final save: ensure all tokens are written before marking complete
+    logger.info(`[ProcessAnalysisJob] Writing final results (${tokensMap.size} tokens, ${totalTransactions} txs)`);
+
+    await db.transaction(async (tx: any) => {
+      // Final write of all token results
+      await upsertTokenResults(tx, jobId, tokensMap);
+
+      // Mark analysis as completed
+      await tx.update(walletAnalysisJobs)
+        .set({
+          status: 'completed',
+          completedAt: new Date(),
+          totalSignatures: totalTransactions,
+          lastSignature: firstSignature,  // Save the first (most recent) signature
+          paginationToken: null  // Clear pagination token (analysis is complete)
+        })
+        .where(eq(walletAnalysisJobs.id, jobId));
+    });
 
     logger.info(`[ProcessAnalysisJob] Completed analysis for ${job.walletAddress} - ${totalTransactions} signatures, ${totalTrades} trades, ${nftCount} NFTs`);
 
@@ -616,11 +622,34 @@ export async function processIncrementalAnalysisAsync(
 
     logger.info(`[ProcessIncrementalAnalysis] Starting incremental scan for ${job.walletAddress}`);
 
-    // Load existing tokens from token_analysis_results table
+    // Load existing tokens from token_analysis_results table with proper mapping
     const { tokens: existingTokens } = await getTokenResults(db, jobId, 1, 10000);
-    const cachedTokens = new Map<string, any>(
-      existingTokens.map((t: any) => [t.mint, t])
-    );
+
+    // Map DB fields to in-memory tokensMap format (same as recovery logic)
+    const tokensMap = new Map<string, any>(existingTokens.map((t: any) => [t.mint, {
+      mint: t.mint,
+      symbol: t.symbol,
+      name: t.name,
+      tokenSymbol: t.symbol,
+      totalVolumeUSD: Number(t.totalVolumeUSD || 0),
+      totalVolumeSOL: Number(t.totalVolumeSOL || 0),
+      totalMissedATH: Number(t.totalMissedATH || 0),
+      totalGainLoss: Number(t.totalGainLoss || 0),
+      totalPnlUSD: Number(t.totalPnlUSD || 0),
+      tradeCount: Number(t.trades || 0),
+      // Load cumulative sums directly from DB
+      sumAthPrice: Number(t.sumAthPrice || 0),
+      sumPurchaseValue: Number(t.sumPurchaseValue || 0),
+      sumTradeValue: Number(t.sumTradeValue || 0),
+      sumTokensTraded: Number(t.sumTokensTraded || 0),
+      totalTokensTraded: Number(t.totalTokensTraded || 0),
+      tradesMissingPrice: 0,
+      pricedTrades: Number(t.trades || 0),
+      // Load pre-calculated averages as fallback (for recovery from corrupted sums)
+      averageTradePrice: Number(t.averageTradePrice || 0),
+      averageAthPrice: Number(t.averageAthPrice || 0),
+      averagePurchasePrice: Number(t.averagePurchasePrice || 0),
+    }]));
 
     // Scan new transactions
     let cursor = undefined;
@@ -639,13 +668,13 @@ export async function processIncrementalAnalysisAsync(
         const newTransactions = result.transactions.slice(0, lastCachedIndex);
 
         if (newTransactions.length > 0) {
-          await processNewTransactions(newTransactions, cachedTokens, cachedBirdeyeService);
+          await processNewTransactions(newTransactions, tokensMap, cachedBirdeyeService);
           newTransactionsCount += newTransactions.length;
         }
 
         hasMore = false;
       } else {
-        await processNewTransactions(result.transactions, cachedTokens, cachedBirdeyeService);
+        await processNewTransactions(result.transactions, tokensMap, cachedBirdeyeService);
         newTransactionsCount += result.transactions.length;
         cursor = result.paginationToken;
         hasMore = result.hasMore;
@@ -653,10 +682,10 @@ export async function processIncrementalAnalysisAsync(
     }
 
     // Write updated tokens back to token_analysis_results
-    await upsertTokenResults(db, jobId, cachedTokens);
+    await upsertTokenResults(db, jobId, tokensMap);
 
     // Calculate updated light summary - preserve existing metrics if available
-    const tokens = Array.from(cachedTokens.values());
+    const tokens = Array.from(tokensMap.values());
     const existingSummary = job.currentResults || {};
 
     // Recalculate token distribution and performers
@@ -699,25 +728,26 @@ export async function processIncrementalAnalysisAsync(
       .map((token: any) => {
         const missedUSD = Number(token.totalMissedATH || 0);
 
-        // Recalculate average ATH price from raw sums (in case processNewTransactions updated them)
-        const athPrice = token.trades > 0
-          ? Number(token.sumAthPrice || token.averageAthPrice || 0) / (token.trades || 1)
+        // Calculate average ATH price from cumulative sums
+        // Fallback to pre-calculated value if sums are corrupted
+        const sumAthPrice = Number(token.sumAthPrice || 0);
+        const athPrice = token.tradeCount > 0 && sumAthPrice > 0
+          ? sumAthPrice / token.tradeCount
           : Number(token.averageAthPrice || 0);
 
-        // Recalculate weighted average purchase price from raw sums
+        // Calculate weighted average trade price from cumulative sums
+        // Fallback to pre-calculated value if sums are corrupted (sumTokensTraded > 0 but sumTradeValue = 0)
         const sumTokensTraded = Number(token.sumTokensTraded || 0);
-        const soldPrice = sumTokensTraded > 0
-          ? Number(token.sumPurchaseValue || 0) / sumTokensTraded
-          : Number(token.averagePurchasePrice || 0);
+        const sumTradeValue = Number(token.sumTradeValue || 0);
+        const tradePrice = sumTokensTraded > 0 && sumTradeValue > 0
+          ? sumTradeValue / sumTokensTraded
+          : Number(token.averageTradePrice || 0);
 
-        // Calculate percentage change from ATH
+        // Calculate percentage change from ATH to average trade price
+        // Shows if user traded well (close to ATH) or poorly (far below ATH)
         let athChangePct = 0;
-        if (athPrice > 0) {
-          if (soldPrice > 0) {
-            athChangePct = ((soldPrice - athPrice) / athPrice) * 100;
-          } else {
-            athChangePct = 0;
-          }
+        if (athPrice > 0 && tradePrice > 0) {
+          athChangePct = ((tradePrice - athPrice) / athPrice) * 100;
         }
 
         return {
@@ -725,7 +755,7 @@ export async function processIncrementalAnalysisAsync(
           symbol: token.symbol || null,
           missed_usd: missedUSD,
           ath_price: athPrice,
-          sold_price: soldPrice > 0 ? soldPrice : null,
+          trade_price: tradePrice > 0 ? tradePrice : null,
           ath_change_pct: athChangePct,
         };
       })

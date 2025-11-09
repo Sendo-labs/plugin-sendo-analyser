@@ -10,6 +10,7 @@ import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConf
 import { createCachedBirdeyeService } from './cache/priceCache';
 import { runCacheCleanup } from './cache';
 import { startAnalysisJob, getAnalysisStatus, getAnalysisTransactions } from './analysis';
+import { QueueManagerService } from './queue/queueManager.js';
 import type { HeliusService } from './api/helius.js';
 import type { BirdeyeService } from './api/birdeyes.js';
 
@@ -20,6 +21,7 @@ export class SendoAnalyserService extends Service {
   private serviceConfig: SendoAnalyserConfig;
   private heliusService: HeliusService;
   private birdeyeService: BirdeyeService;
+  private queueManager: QueueManagerService | null = null;
 
   get capabilityDescription(): string {
     return 'Sendo Analyser service that provides Solana wallet analysis, trades, tokens, NFTs, and transactions decoding';
@@ -37,7 +39,7 @@ export class SendoAnalyserService extends Service {
     this.serviceConfig = config;
     this.heliusService = createHeliusService(
       config.heliusApiKey,
-      config.heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT
+      config.heliusRateLimit || Math.floor(SENDO_ANALYSER_DEFAULTS.HELIUS_MAX_RPS * SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT / 100)
     );
 
     // BirdEye service will be initialized in initialize() after runtime.db is available
@@ -62,12 +64,30 @@ export class SendoAnalyserService extends Service {
     // Set global BirdEye service
     setGlobalBirdeyeService(this.birdeyeService);
 
+    // Initialize and start the Queue Manager
+    const db = this.getDb();
+    const maxConcurrentJobs = this.serviceConfig.maxConcurrentJobs || SENDO_ANALYSER_DEFAULTS.MAX_CONCURRENT_JOBS;
+    this.queueManager = new QueueManagerService(
+      db,
+      this.birdeyeService,
+      this.heliusService,
+      maxConcurrentJobs
+    );
+    await this.queueManager.start();
+
     logger.info('[SendoAnalyserService] Initialized successfully with DynamicRateLimiter');
-    logger.info(`[SendoAnalyserService] BirdEye RPS: ${SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS}, Usage: ${SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT}%`);
+    logger.info(`[SendoAnalyserService] BirdEye: ${SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS} RPS max, ${SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT}% usage = ${Math.floor(SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS * SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT / 100)} RPS actual`);
+    logger.info(`[SendoAnalyserService] Helius: ${SENDO_ANALYSER_DEFAULTS.HELIUS_MAX_RPS} RPS max, ${SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT}% usage = ${Math.floor(SENDO_ANALYSER_DEFAULTS.HELIUS_MAX_RPS * SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT / 100)} RPS actual`);
+    logger.info(`[SendoAnalyserService] Queue Manager started with max ${maxConcurrentJobs} concurrent jobs`);
   }
 
   async stop(): Promise<void> {
     logger.info('[SendoAnalyserService] Stopping...');
+
+    // Stop the queue manager
+    if (this.queueManager) {
+      this.queueManager.stop();
+    }
   }
 
   static async start(runtime: IAgentRuntime): Promise<SendoAnalyserService> {
@@ -83,8 +103,23 @@ export class SendoAnalyserService extends Service {
 
   /**
    * Get the Drizzle database instance from runtime
+   * IMPORTANT: We get the database from the adapter's manager, not from runtime.db
+   * because runtime.db can point to a closed client after operations complete.
    */
   private getDb(): any {
+    const adapter = (this.runtime as any).adapter;
+    if (!adapter) {
+      throw new Error('Database adapter not available in runtime');
+    }
+
+    // For PostgreSQL adapter, get the database from the manager (connected to pool)
+    // This ensures we always have a valid connection
+    if (typeof adapter.getManager === 'function') {
+      const manager = adapter.getManager();
+      return manager.getDatabase();
+    }
+
+    // Fallback to runtime.db for other adapters (PGLite, etc.)
     const db = (this.runtime as any).db;
     if (!db) {
       throw new Error('Database not available in runtime');

@@ -124,6 +124,7 @@ export async function startAnalysisJob(
     }
 
     // Create new job (old failed job deleted if existed)
+    // The job starts as 'pending' and will be picked up by QueueManagerService
     const [newJob] = await db
       .insert(walletAnalysisJobs)
       .values({
@@ -134,11 +135,6 @@ export async function startAnalysisJob(
         currentBatch: 0
       })
       .returning();
-
-    // Launch worker async
-    processAnalysisJobAsync(db, newJob.id, heliusService, cachedBirdeyeService).catch(err => {
-      logger.error(`[StartAnalysisJob] Worker failed:`, err);
-    });
 
     return {
       job_id: newJob.id,
