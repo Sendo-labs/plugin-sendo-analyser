@@ -53,18 +53,27 @@ export async function upsertTokenResults(
 
     // Step 2: Calculate averages and prepare batch upsert
     const analysisResults = tokensList.map(token => {
-      // Calculate weighted average purchase price
+      // Extract cumulative sums
       const sumTokensTraded = Number(token.sumTokensTraded || 0);
+      const sumPurchaseValue = Number(token.sumPurchaseValue || 0);
+      const sumTradeValue = Number(token.sumTradeValue || 0);
+      const sumAthPrice = Number(token.sumAthPrice || 0);
+      const tradeCount = Number(token.tradeCount || 0);
+
       const totalTokensTradedRaw = token.totalTokensTraded ?? sumTokensTraded;
       const totalTokensTraded = Number(totalTokensTradedRaw || 0);
 
+      // Calculate averages from sums (for display/API)
       const averagePurchasePrice = sumTokensTraded > 0
-        ? Number(token.sumPurchaseValue || 0) / sumTokensTraded
+        ? sumPurchaseValue / sumTokensTraded
         : null;
 
-      // Calculate average ATH price (simple average across trades)
-      const averageAthPrice = token.tradeCount > 0
-        ? Number(token.sumAthPrice || 0) / token.tradeCount
+      const averageTradePrice = sumTokensTraded > 0
+        ? sumTradeValue / sumTokensTraded
+        : null;
+
+      const averageAthPrice = tradeCount > 0
+        ? sumAthPrice / tradeCount
         : null;
 
       return {
@@ -75,9 +84,15 @@ export async function upsertTokenResults(
         totalGainLoss: token.totalGainLoss || 0,
         totalPnlUSD: token.totalPnlUSD || 0,
         totalMissedATH: token.totalMissedATH || 0,
-        trades: token.tradeCount || 0,
+        trades: tradeCount,
         averagePurchasePrice,
+        averageTradePrice,
         averageAthPrice,
+        // Save cumulative sums for accurate recovery
+        sumAthPrice,
+        sumPurchaseValue,
+        sumTradeValue,
+        sumTokensTraded,
         totalTokensTraded,
         updatedAt: now,
       };
@@ -100,7 +115,13 @@ export async function upsertTokenResults(
             totalMissedATH: sql`EXCLUDED.total_missed_ath`,
             trades: sql`EXCLUDED.trades`,
             averagePurchasePrice: sql`EXCLUDED.average_purchase_price`,
+            averageTradePrice: sql`EXCLUDED.average_trade_price`,
             averageAthPrice: sql`EXCLUDED.average_ath_price`,
+            // Save cumulative sums
+            sumAthPrice: sql`EXCLUDED.sum_ath_price`,
+            sumPurchaseValue: sql`EXCLUDED.sum_purchase_value`,
+            sumTradeValue: sql`EXCLUDED.sum_trade_value`,
+            sumTokensTraded: sql`EXCLUDED.sum_tokens_traded`,
             totalTokensTraded: sql`EXCLUDED.total_tokens_traded`,
             updatedAt: now,
           },
@@ -140,7 +161,13 @@ export async function getTokenResults(
         totalMissedATH: tokenAnalysisResults.totalMissedATH,
         trades: tokenAnalysisResults.trades,
         averagePurchasePrice: tokenAnalysisResults.averagePurchasePrice,
+        averageTradePrice: tokenAnalysisResults.averageTradePrice,
         averageAthPrice: tokenAnalysisResults.averageAthPrice,
+        // Cumulative sums (for recovery)
+        sumAthPrice: tokenAnalysisResults.sumAthPrice,
+        sumPurchaseValue: tokenAnalysisResults.sumPurchaseValue,
+        sumTradeValue: tokenAnalysisResults.sumTradeValue,
+        sumTokensTraded: tokenAnalysisResults.sumTokensTraded,
         totalTokensTraded: tokenAnalysisResults.totalTokensTraded,
         createdAt: tokenAnalysisResults.createdAt,
         updatedAt: tokenAnalysisResults.updatedAt,

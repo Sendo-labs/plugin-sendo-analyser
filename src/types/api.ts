@@ -120,8 +120,8 @@ export interface PainPointStats {
   symbol: string | null;
   missed_usd: number;
   ath_price: number;
-  sold_price: number | null;
-  ath_change_pct: number;
+  trade_price: number | null;  // Average price at which trades were executed
+  ath_change_pct: number;  // Percentage change from ATH to average trade price
 }
 
 // Summary stats from analysis

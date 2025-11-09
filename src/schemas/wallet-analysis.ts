@@ -31,7 +31,6 @@ export const walletAnalysisJobs = sendoAnalyserSchema.table('wallet_analysis_job
 
   // Results
   currentResults: jsonb('current_results'),  // Results updated after each batch (final when completed)
-  allTransactions: jsonb('all_transactions'), // All transactions for server-side pagination
 
   // Error handling
   error: text('error'),
@@ -64,7 +63,7 @@ export const tokenPriceCache = sendoAnalyserSchema.table('token_price_cache', {
   id: uuid('id').primaryKey().defaultRandom(),
 
   // Identification (foreign key to tokens table)
-  mint: text('mint').notNull().references(() => tokens.mint, { onDelete: 'cascade' }),
+  mint: text('mint').notNull().unique().references(() => tokens.mint, { onDelete: 'cascade' }),
 
   // Prices
   purchasePrice: numeric('purchase_price'),  // Price at purchase time
@@ -126,9 +125,16 @@ export const tokenAnalysisResults = sendoAnalyserSchema.table('token_analysis_re
   totalMissedATH: numeric('total_missed_ath').notNull().default('0'),
   trades: integer('trades').notNull().default(0),
 
-  // Price statistics
+  // Price statistics (averages for display)
   averagePurchasePrice: numeric('average_purchase_price'),
+  averageTradePrice: numeric('average_trade_price'),
   averageAthPrice: numeric('average_ath_price'),
+
+  // Cumulative sums (needed for accurate incremental calculations after crash recovery)
+  sumAthPrice: numeric('sum_ath_price').notNull().default('0'),
+  sumPurchaseValue: numeric('sum_purchase_value').notNull().default('0'),
+  sumTradeValue: numeric('sum_trade_value').notNull().default('0'),
+  sumTokensTraded: numeric('sum_tokens_traded').notNull().default('0'),
 
   // Token quantities
   totalTokensTraded: numeric('total_tokens_traded').notNull().default('0'),

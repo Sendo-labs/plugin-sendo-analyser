@@ -9,6 +9,7 @@ export interface SendoAnalyserConfig {
   birdeyeRateLimit?: number; // requests per second
   heliusRateLimit?: number; // requests per second
   birdeyePriceTimeframe?: BirdEyeTimeframe; // historical price data granularity
+  maxConcurrentJobs?: number; // maximum number of analysis jobs running in parallel
 }
 
 /**
@@ -23,16 +24,16 @@ export type BirdEyeTimeframe = '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D';
  * Default configuration values
  */
 export const SENDO_ANALYSER_DEFAULTS = {
-  BIRDEYE_RATE_LIMIT: 40, // 80% of 50 RPS (your actual BirdEye limit)
   BIRDEYE_MAX_RPS: 50,     // Your BirdEye subscription: 50 RPS, 1000 RPM
-  HELIUS_RATE_LIMIT: 160,  // 80% of 200 RPS (your actual Helius limit)
   HELIUS_MAX_RPS: 200,     // Your Helius subscription: 200 RPS
-  API_USAGE_PERCENT: 80,   // Use 80% of available RPS for safety margin
+  API_USAGE_PERCENT: 80,   // Use 80% of available RPS for safety margin (applied to both APIs)
   BIRDEYE_API_BASE: 'https://public-api.birdeye.so/defi',
   HELIUS_NETWORK: 'mainnet' as const,
   // Price history timeframe: '1D' = daily candles (best for ATH, ~1 API call per year of data)
   // Alternative: '1H' = hourly (more precise but ~9 API calls per year)
   BIRDEYE_PRICE_TIMEFRAME: '1D' as BirdEyeTimeframe,
+  // Job queue: Maximum number of concurrent analysis jobs (based on 4GB RAM / ~227MB per job)
+  MAX_CONCURRENT_JOBS: 15,
 };
 
 /**
@@ -49,16 +50,24 @@ export function getSendoAnalyserConfig(runtime: IAgentRuntime): SendoAnalyserCon
   }
 
   const birdeyeApiKey = runtime.getSetting('BIRDEYE_API_KEY') as string;
-  const birdeyeRateLimit = parseInt(runtime.getSetting('BIRDEYE_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT));
-  const heliusRateLimit = parseInt(runtime.getSetting('HELIUS_RATE_LIMIT') as string || String(SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT));
   const birdeyePriceTimeframe = (runtime.getSetting('BIRDEYE_PRICE_TIMEFRAME') as BirdEyeTimeframe) || SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME;
+  const maxConcurrentJobs = parseInt(runtime.getSetting('MAX_CONCURRENT_JOBS') as string || String(SENDO_ANALYSER_DEFAULTS.MAX_CONCURRENT_JOBS));
+
+  // Calculate rate limits with API_USAGE_PERCENT (80% of max by default)
+  const apiUsagePercent = parseInt(runtime.getSetting('API_USAGE_PERCENT') as string || String(SENDO_ANALYSER_DEFAULTS.API_USAGE_PERCENT));
+  const birdeyeMaxRps = parseInt(runtime.getSetting('BIRDEYE_MAX_RPS') as string || String(SENDO_ANALYSER_DEFAULTS.BIRDEYE_MAX_RPS));
+  const heliusMaxRps = parseInt(runtime.getSetting('HELIUS_MAX_RPS') as string || String(SENDO_ANALYSER_DEFAULTS.HELIUS_MAX_RPS));
+
+  const birdeyeRateLimit = Math.floor(birdeyeMaxRps * apiUsagePercent / 100);
+  const heliusRateLimit = Math.floor(heliusMaxRps * apiUsagePercent / 100);
 
   return {
     heliusApiKey,
     birdeyeApiKey: birdeyeApiKey || undefined,
-    birdeyeRateLimit: birdeyeRateLimit || SENDO_ANALYSER_DEFAULTS.BIRDEYE_RATE_LIMIT,
-    heliusRateLimit: heliusRateLimit || SENDO_ANALYSER_DEFAULTS.HELIUS_RATE_LIMIT,
-    birdeyePriceTimeframe: birdeyePriceTimeframe || SENDO_ANALYSER_DEFAULTS.BIRDEYE_PRICE_TIMEFRAME,
+    birdeyeRateLimit,
+    heliusRateLimit,
+    birdeyePriceTimeframe,
+    maxConcurrentJobs,
   };
 }
 
