@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.0.0...v1.1.0) (2025-11-09)
+
+
+### Features
+
+* implement Queue Manager for concurrent job processing ([#17](https://github.com/Sendo-labs/plugin-sendo-analyser/issues/17)) ([833f586](https://github.com/Sendo-labs/plugin-sendo-analyser/commit/833f58659ab195ff193a196b7e784a1541549cbd))
+
 ## 1.0.0 (2025-11-09)
 
 
