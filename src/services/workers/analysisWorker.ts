@@ -222,14 +222,6 @@ export async function processAnalysisJobAsync(
             `Price timeout for ${mint.slice(0, 8)}`
           );
 
-          // Override symbol/name with Helius metadata (if available)
-          // This reduces Birdeye API calls since we're not using their metadata endpoint
-          if (analysis && metadataMap.has(mint)) {
-            const metadata = metadataMap.get(mint)!;
-            analysis.symbol = metadata.symbol || analysis.symbol;
-            analysis.name = metadata.name || analysis.name;
-          }
-
           return { mint, timestamp, analysis };
         } catch (error: any) {
           logger.warn(`[ProcessAnalysisJob] Skipping price for ${mint.slice(0, 8)}... (${error?.message || String(error)})`);
@@ -306,8 +298,11 @@ export async function processAnalysisJobAsync(
           let missedATH = 0;
           let gainLoss = 0;
           let pnl = 0;
-          let symbol = trade.tokenSymbol;
-          let name = null;
+
+          // Get metadata from Helius (batch-fetched earlier)
+          const metadata = metadataMap.get(trade.mint);
+          let symbol = metadata?.symbol || trade.tokenSymbol;
+          let name = metadata?.name || null;
 
           if (!priceAnalysis) {
             tradesMissingPrice++;
@@ -315,8 +310,6 @@ export async function processAnalysisJobAsync(
 
           if (priceAnalysis) {
             const { purchasePrice, currentPrice, athPrice } = priceAnalysis;
-            symbol = priceAnalysis.symbol || trade.tokenSymbol;
-            name = priceAnalysis.name;  // Store full token name
 
             // Calculate USD volume for this trade
             volume = Number(trade.amount) * Number(purchasePrice);

@@ -44,15 +44,14 @@ export interface BirdeyeService {
 
   getPriceAnalysis(
     mint: string,
-    purchaseTimestamp: number
+    purchaseTimestamp: number,
+    timeframe?: '1m' | '5m' | '15m' | '30m' | '1H' | '4H' | '1D'
   ): Promise<{
     purchasePrice: number;
     currentPrice: number;
     athPrice: number;
     athTimestamp: number;
     priceHistory: BirdEyePriceData[];
-    symbol: string | null;
-    name: string | null;
   } | null>;
 }
 
@@ -242,9 +241,7 @@ export function getBirdeyeService(
       currentPrice,
       athPrice,
       athTimestamp,
-      priceHistory,
-      symbol: null,  // Will be overridden by Helius metadata in analysisWorker.ts
-      name: null     // Will be overridden by Helius metadata in analysisWorker.ts
+      priceHistory
     };
   };
 
