@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.1.0...v1.2.0) (2025-11-10)
+
+
+### Features
+
+* leaderboard ([#20](https://github.com/Sendo-labs/plugin-sendo-analyser/issues/20)) ([606fd9a](https://github.com/Sendo-labs/plugin-sendo-analyser/commit/606fd9a6f79f0ed87336d1952fd3666e73c3cb76))
+
 ## [1.1.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.0.0...v1.1.0) (2025-11-09)
 
 
