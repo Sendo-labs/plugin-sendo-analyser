@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.2.0...v2.0.0) (2025-11-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* Version reset to 1.9.0 to align with new versioning strategy
+
+### Features
+
+* reset version baseline to 1.9.0 ([3e87616](https://github.com/Sendo-labs/plugin-sendo-analyser/commit/3e876166e153f7b15d8e14aa41e62134bf22b6c1))
+
 ## [1.9.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.2.0...v1.9.0) (2025-11-10)
 
 
