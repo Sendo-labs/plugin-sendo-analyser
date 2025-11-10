@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.2.0...v1.9.0) (2025-11-10)
+
+
+### 🔧 Miscellaneous
+
+* Bump version to 1.9.0 to align with package versioning strategy
+
 ## [1.2.0](https://github.com/Sendo-labs/plugin-sendo-analyser/compare/v1.1.0...v1.2.0) (2025-11-10)
 
 
