@@ -98,10 +98,69 @@ async function getAnalysisResultsHandler(req: any, res: any, runtime: IAgentRunt
 }
 
 // ============================================
+// LEADERBOARD ROUTES
+// ============================================
+
+/**
+ * GET /leaderboard/shame?limit=20&period=all
+ * Get Hall of Shame leaderboard (top wallets by missed ATH gains)
+ */
+async function getShameLeaderboardHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100); // Max 100
+  const period = (req.query.period || 'all') as 'all' | 'month' | 'week';
+  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
+
+  if (!analyserService) {
+    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
+  }
+
+  // Validate period
+  if (!['all', 'month', 'week'].includes(period)) {
+    return sendError(res, 400, 'INVALID_REQUEST', 'period must be one of: all, month, week');
+  }
+
+  try {
+    const result = await analyserService.getShameLeaderboard(limit, period);
+    sendSuccess(res, result);
+  } catch (error: any) {
+    logger.error('[Route] Failed to get shame leaderboard:', error);
+    sendError(res, 500, 'LEADERBOARD_ERROR', 'Failed to get shame leaderboard', error.message);
+  }
+}
+
+/**
+ * GET /leaderboard/fame?limit=20&period=all
+ * Get Hall of Fame leaderboard (top wallets by positive PnL)
+ */
+async function getFameLeaderboardHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100); // Max 100
+  const period = (req.query.period || 'all') as 'all' | 'month' | 'week';
+  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
+
+  if (!analyserService) {
+    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
+  }
+
+  // Validate period
+  if (!['all', 'month', 'week'].includes(period)) {
+    return sendError(res, 400, 'INVALID_REQUEST', 'period must be one of: all, month, week');
+  }
+
+  try {
+    const result = await analyserService.getFameLeaderboard(limit, period);
+    sendSuccess(res, result);
+  } catch (error: any) {
+    logger.error('[Route] Failed to get fame leaderboard:', error);
+    sendError(res, 500, 'LEADERBOARD_ERROR', 'Failed to get fame leaderboard', error.message);
+  }
+}
+
+// ============================================
 // ROUTE DEFINITIONS
 // ============================================
 
 export const sendoAnalyserRoutes: Route[] = [
+  // Async Analysis Routes
   {
     type: 'POST',
     path: '/analysis/start',
@@ -116,5 +175,16 @@ export const sendoAnalyserRoutes: Route[] = [
     type: 'GET',
     path: '/analysis/:address/results',
     handler: getAnalysisResultsHandler,
+  },
+  // Leaderboard Routes
+  {
+    type: 'GET',
+    path: '/leaderboard/shame',
+    handler: getShameLeaderboardHandler,
+  },
+  {
+    type: 'GET',
+    path: '/leaderboard/fame',
+    handler: getFameLeaderboardHandler,
   },
 ];

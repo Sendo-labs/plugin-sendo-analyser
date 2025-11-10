@@ -161,3 +161,40 @@ export interface AnalysisResultsResponse {
   analysisStatus: JobStatus;
   summary?: AnalysisSummary;
 }
+
+// ============================================
+// LEADERBOARD API TYPES
+// ============================================
+
+// Badge types for leaderboard entries
+export type LeaderboardBadge = 'diamond' | 'gold' | 'silver' | 'bronze';
+
+// Time period filter
+export type LeaderboardPeriod = 'all' | 'month' | 'week';
+
+// Leaderboard entry
+export interface LeaderboardEntry {
+  wallet: string;
+  total_missed_usd?: number;  // For Hall of Shame
+  total_gains_usd?: number;   // For Hall of Fame (total_pnl when positive)
+  rank: string;               // Humorous rank title
+  badge?: LeaderboardBadge;   // Optional badge for top performers
+  completed_at: Date;         // When the analysis was completed
+  days_since_analysis: number; // Days since last analysis (for freshness indicator)
+}
+
+// GET /leaderboard/shame - Hall of Shame response
+export interface ShameLeaderboardResponse {
+  entries: LeaderboardEntry[];
+  total: number;
+  limit: number;
+  period: LeaderboardPeriod;
+}
+
+// GET /leaderboard/fame - Hall of Fame response
+export interface FameLeaderboardResponse {
+  entries: LeaderboardEntry[];
+  total: number;
+  limit: number;
+  period: LeaderboardPeriod;
+}
