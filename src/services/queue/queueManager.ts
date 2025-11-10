@@ -138,7 +138,7 @@ export class QueueManagerService {
         return;
       }
 
-      logger.info(
+      logger.debug(
         `[QueueManager] ${processingCount}/${this.maxConcurrentJobs} jobs running, ${availableSlots} slots available`
       );
 

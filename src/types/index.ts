@@ -39,6 +39,12 @@ export type {
   AnalysisResultsResponse,
   TokenAnalysisResult,
   AnalysisSummary,
+  // Leaderboard types
+  LeaderboardBadge,
+  LeaderboardPeriod,
+  LeaderboardEntry,
+  ShameLeaderboardResponse,
+  FameLeaderboardResponse,
 } from './api.js';
 
 // Schemas for LLM validation

@@ -10,6 +10,7 @@ import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConf
 import { createCachedBirdeyeService } from './cache/priceCache';
 import { runCacheCleanup } from './cache';
 import { startAnalysisJob, getAnalysisStatus, getAnalysisTransactions } from './analysis';
+import { getShameLeaderboard, getFameLeaderboard } from './analysis/leaderboard.js';
 import { QueueManagerService } from './queue/queueManager.js';
 import type { HeliusService } from './api/helius.js';
 import type { BirdeyeService } from './api/birdeyes.js';
@@ -409,6 +410,32 @@ export class SendoAnalyserService extends Service {
   async getAsyncAnalysisTokens(address: string, page: number = 1, limit: number = 50): Promise<any> {
     const db = this.getDb();
     return getAnalysisTransactions(db, address, page, limit);
+  }
+
+  // ============================================
+  // LEADERBOARD METHODS
+  // ============================================
+
+  /**
+   * Get Hall of Shame leaderboard (top wallets by missed ATH gains)
+   * @param limit - Number of entries to return (default: 20)
+   * @param period - Time period filter: 'all', 'month', or 'week' (default: 'all')
+   * @returns Leaderboard entries with badges and ranks
+   */
+  async getShameLeaderboard(limit: number = 25, period: 'all' | 'month' | 'week' = 'all'): Promise<any> {
+    const db = this.getDb();
+    return getShameLeaderboard(db, limit, period);
+  }
+
+  /**
+   * Get Hall of Fame leaderboard (top wallets by positive PnL)
+   * @param limit - Number of entries to return (default: 20)
+   * @param period - Time period filter: 'all', 'month', or 'week' (default: 'all')
+   * @returns Leaderboard entries with badges and ranks
+   */
+  async getFameLeaderboard(limit: number = 25, period: 'all' | 'month' | 'week' = 'all'): Promise<any> {
+    const db = this.getDb();
+    return getFameLeaderboard(db, limit, period);
   }
 
   // ============================================
