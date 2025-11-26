@@ -155,6 +155,30 @@ async function getFameLeaderboardHandler(req: any, res: any, runtime: IAgentRunt
   }
 }
 
+
+async function analyzeSwapsHandler(req: any, res: any, runtime: IAgentRuntime): Promise<void> {
+  const { address } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500); // Max 500
+  const before = req.query.before;
+  const analyserService = runtime.getService<SendoAnalyserService>('sendo_analyser');
+
+  if (!analyserService) {
+    return sendError(res, 500, 'SERVICE_NOT_FOUND', 'SendoAnalyserService not found');
+  }
+
+  if (!address) {
+    return sendError(res, 400, 'INVALID_REQUEST', 'address is required');
+  }
+
+  try {
+    const result = await analyserService.analyzeWalletSwaps(address, limit, before);
+    sendSuccess(res, result);
+  } catch (error: any) {
+    logger.error('[Route] Failed to analyze swaps:', error);
+    sendError(res, 500, 'ANALYSIS_ERROR', 'Failed to analyze swaps', error.message);
+  }
+}
+
 // ============================================
 // ROUTE DEFINITIONS
 // ============================================
@@ -175,6 +199,12 @@ export const sendoAnalyserRoutes: Route[] = [
     type: 'GET',
     path: '/analysis/:address/results',
     handler: getAnalysisResultsHandler,
+  },
+  // Swap Analysis Route (NEW - Using Decoder Base)
+  {
+    type: 'GET',
+    path: '/swaps/:address',
+    handler: analyzeSwapsHandler,
   },
   // Leaderboard Routes
   {

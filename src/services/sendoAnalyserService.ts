@@ -439,13 +439,43 @@ export class SendoAnalyserService extends Service {
   }
 
   // ============================================
+  // SWAP ANALYSIS METHODS (NEW - Using Decoder Base)
+  // ============================================
+
+  async analyzeWalletSwaps(
+    address: string,
+    limit: number = 100,
+    before?: string
+  ): Promise<any> {
+    try {
+      logger.info(`[SendoAnalyserService] Analyzing wallet swaps for address: ${address}`);
+      
+      // Import SwapAnalysisService dynamically to avoid circular dependencies
+      const { SwapAnalysisService } = await import('./swapAnalysisService.js');
+      
+      const swapService = new SwapAnalysisService(
+        this.heliusService,
+        this.birdeyeService
+      );
+      
+      const result = await swapService.analyzeWalletSwaps(address, limit, before);
+      
+      return {
+        address,
+        swaps: result,
+        count: result.length,
+        timestamp: Date.now()
+      };
+    } catch (error: any) {
+      logger.error('[SendoAnalyserService] Error analyzing wallet swaps:', error?.message || error);
+      throw error;
+    }
+  }
+
+  // ============================================
   // CACHE MANAGEMENT
   // ============================================
 
-  /**
-   * Run cache cleanup (prices, transactions, jobs)
-   * Should be scheduled to run periodically (e.g., daily cron)
-   */
   async runCacheCleanup(): Promise<void> {
     const db = this.getDb();
     await runCacheCleanup(db);

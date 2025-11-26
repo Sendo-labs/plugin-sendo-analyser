@@ -1,4 +1,19 @@
 import type { IAgentRuntime } from '@elizaos/core';
+import { Connection } from '@solana/web3.js';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+
+
+
+export const RPC_ENDPOINT = process.env.HELIUS_RPC_ENDPOINT || ""
+export const RPC_WEBSOCKET_ENDPOINT = process.env.HELIUS_RPC_WEBSOCKET_ENDPOINT
+
+export const solanaConnection = new Connection(RPC_ENDPOINT, {
+  wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+  commitment: 'confirmed',
+});
 
 /**
  * Configuration interface for Sendo Analyser plugin
