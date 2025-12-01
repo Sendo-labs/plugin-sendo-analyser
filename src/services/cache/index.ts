@@ -7,14 +7,14 @@
  * - Job Cache: Analysis jobs (TTL: 7 days for completed, 1 day for failed)
  */
 
-export * from './priceCache';
-export * from './transactionCache';
-export * from './jobCache';
+export * from './priceCache.js';
+export * from './transactionCache.js';
+export * from './jobCache.js';
 
 import { logger } from '@elizaos/core';
-import { cleanOldPriceCache } from './priceCache';
-import { cleanOldTransactionCache } from './transactionCache';
-import { cleanAllCaches as cleanJobCaches } from './jobCache';
+import { cleanOldPriceCache } from './priceCache.js';
+import { cleanOldTransactionCache } from './transactionCache.js';
+import { cleanAllCaches as cleanJobCaches } from './jobCache.js';
 
 /**
  * Run all cache cleanup operations

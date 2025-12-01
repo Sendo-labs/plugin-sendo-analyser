@@ -1,5 +1,5 @@
-import { parseTransactionsWithPriceAnalysis } from '../../utils/parseTrade';
-import type { BirdeyeService } from '../api/birdeyes';
+import { parseTransactionsWithPriceAnalysis } from '../../utils/parseTrade.js';
+import type { BirdeyeService } from '../api/birdeyes.js';
 
 /**
  * Worker Helper Functions

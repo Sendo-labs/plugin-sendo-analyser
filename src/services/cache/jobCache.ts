@@ -1,6 +1,6 @@
 import { eq, lt, sql } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { walletAnalysisJobs } from '../../schemas/wallet-analysis';
+import { walletAnalysisJobs } from '../../schemas/wallet-analysis.js';
 
 /**
  * Job Cache Module

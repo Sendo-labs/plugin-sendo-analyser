@@ -1,11 +1,11 @@
 import { eq, desc } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { walletAnalysisJobs } from '../../schemas/wallet-analysis';
-import { processAnalysisJobAsync, processIncrementalAnalysisAsync } from '../workers/analysisWorker';
-import { getTokenResults } from './tokenResults';
-import type { HeliusService } from '../api/helius';
-import type { BirdeyeService } from '../api/birdeyes';
-import type { StartAnalysisResponse, AnalysisStatusResponse, AnalysisResultsResponse } from '../../types/api';
+import { walletAnalysisJobs } from '../../schemas/wallet-analysis.js';
+import { processAnalysisJobAsync, processIncrementalAnalysisAsync } from '../workers/analysisWorker.js';
+import { getTokenResults } from './tokenResults.js';
+import type { HeliusService } from '../api/helius.js';
+import type { BirdeyeService } from '../api/birdeyes.js';
+import type { StartAnalysisResponse, AnalysisStatusResponse, AnalysisResultsResponse } from '../../types/api.js';
 
 /**
  * Analysis Jobs Module

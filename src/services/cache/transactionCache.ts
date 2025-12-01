@@ -1,10 +1,10 @@
 import { eq, lt, inArray } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { transactionCache } from '../../schemas/wallet-analysis';
-import { decodeTxData } from '../../utils/decoder/index';
-import { serializeBigInt } from '../../utils/serializeBigInt';
-import { extractTrades } from '../../utils/extractTrades';
-import type { HeliusService } from '../api/helius';
+import { transactionCache } from '../../schemas/wallet-analysis.js';
+import { decodeTxData } from '../../utils/decoder/index.js';
+import { serializeBigInt } from '../../utils/serializeBigInt.js';
+import { extractTrades } from '../../utils/extractTrades.js';
+import type { HeliusService } from '../api/helius.js';
 
 /**
  * Transaction Cache Module

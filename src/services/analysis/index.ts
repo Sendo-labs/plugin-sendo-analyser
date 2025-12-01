@@ -3,4 +3,4 @@
  * Job management and CRUD operations for wallet analysis
  */
 
-export * from './analysisJobs';
+export * from './analysisJobs.js';

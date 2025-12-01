@@ -1,13 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { walletAnalysisJobs } from '../../schemas/wallet-analysis';
-import { getTransactionsWithCache } from '../cache/transactionCache';
-import { batchFetchPricesOptimized } from '../cache/priceCache';
-import { processNewTransactions } from './workerHelpers';
-import { serializeBigInt } from '../../utils/serializeBigInt';
-import { upsertTokenResults, getTokenResults } from '../analysis/tokenResults';
-import type { HeliusService } from '../api/helius';
-import type { BirdeyeService } from '../api/birdeyes';
+import { walletAnalysisJobs } from '../../schemas/wallet-analysis.js';
+import { getTransactionsWithCache } from '../cache/transactionCache.js';
+import { batchFetchPricesOptimized } from '../cache/priceCache.js';
+import { processNewTransactions } from './workerHelpers.js';
+import { serializeBigInt } from '../../utils/serializeBigInt.js';
+import { upsertTokenResults, getTokenResults } from '../analysis/tokenResults.js';
+import type { HeliusService } from '../api/helius.js';
+import type { BirdeyeService } from '../api/birdeyes.js';
 
 /**
  * Analysis Worker Module

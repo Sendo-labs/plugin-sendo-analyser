@@ -3,5 +3,5 @@
  * Background workers for async wallet analysis
  */
 
-export * from './analysisWorker';
-export * from './workerHelpers';
+export * from './analysisWorker.js';
+export * from './workerHelpers.js';

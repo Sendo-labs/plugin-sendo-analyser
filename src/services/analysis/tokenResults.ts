@@ -5,7 +5,7 @@
 
 import { eq, desc, count, sql } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { tokenAnalysisResults, tokens } from '../../schemas/wallet-analysis';
+import { tokenAnalysisResults, tokens } from '../../schemas/wallet-analysis.js';
 
 /**
  * Upsert token analysis results (OPTIMIZED with batch operations)

@@ -7,9 +7,9 @@ import { createHeliusService, setGlobalHeliusService, setGlobalBirdeyeService, g
 import { decodeTxData, serializedBigInt } from '../utils/decoder/index.js';
 import { parseTransactionsWithPriceAnalysis, calculateGlobalSummary } from '../utils/parseTrade.js';
 import { getSendoAnalyserConfig, SENDO_ANALYSER_DEFAULTS, type SendoAnalyserConfig } from '../config/index.js';
-import { createCachedBirdeyeService } from './cache/priceCache';
-import { runCacheCleanup } from './cache';
-import { startAnalysisJob, getAnalysisStatus, getAnalysisTransactions } from './analysis';
+import { createCachedBirdeyeService } from './cache/priceCache.js';
+import { runCacheCleanup } from './cache/index.js';
+import { startAnalysisJob, getAnalysisStatus, getAnalysisTransactions } from './analysis/index.js';
 import { getShameLeaderboard, getFameLeaderboard } from './analysis/leaderboard.js';
 import { QueueManagerService } from './queue/queueManager.js';
 import type { HeliusService } from './api/helius.js';

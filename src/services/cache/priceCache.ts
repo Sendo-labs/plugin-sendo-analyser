@@ -1,7 +1,7 @@
 import { eq, desc, lt, sql } from 'drizzle-orm';
 import { logger } from '@elizaos/core';
-import { tokenPriceCache, tokens } from '../../schemas/wallet-analysis';
-import type { BirdeyeService } from '../api/birdeyes';
+import { tokenPriceCache, tokens } from '../../schemas/wallet-analysis.js';
+import type { BirdeyeService } from '../api/birdeyes.js';
 
 /**
  * Price Cache Module
