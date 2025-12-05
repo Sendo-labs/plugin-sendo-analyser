@@ -12,9 +12,40 @@ import { poolKeysSchema } from "./pumpswap/schema.js";
 import { poolLayoutSchema } from "./meteora/schema.js";
 import { raydiumPoolSchema } from "./raydium/schema.js";
 import { createMeteoraTrade, createRaydiumTrade } from "./tradingUtils.js";
-import { extractBalances } from "./extractBalances.js";
-// import { extractBalances } from "./extractBalances.js";
+import { BalanceAnalysis, extractBalances } from "./extractBalances";
+import { HeliusTransaction, createHeliusService } from "../../services/api/helius";
 import bs58 from "bs58";
+
+export interface TxDecodeResult {
+    signature: string;
+    recentBlockhash: string;
+    blockTime: number;
+    fee: any;
+    error: string;
+    status: any;
+    accounts: any[];
+    decodedInstructions: any[];
+    parsed: any[];
+    balances: BalanceAnalysis;
+    totalInstructions: number;
+    totalAccountsKeys: number;
+    totalWritableKeys: number;
+    totalReadonlyKeys: number;
+    totalInnerInstructions: any;
+    successfullyDecoded: number;
+}
+
+export interface SolanaInstruction {
+    programIdIndex: number;
+    accounts: number[];
+    data: string;
+    stackHeight: number;
+}
+
+export interface InnerInstruction {
+    index: number;
+    instructions: SolanaInstruction[];
+}
 
 // --------------------------------
 // Serializing big ints to strings
@@ -36,7 +67,7 @@ export const decodeBase64Data = (data: any) => {
     return Buffer.from(data, 'base64');
 }
 
-export const routerDecoderInstructionsData = (type: string, programId: string, instruction: any) => {
+export const routerDecoderInstructionsData = (type: string, programId: string, instruction: SolanaInstruction) => {
     try {
         switch (programId) {
             // COMPUTE_BUDGET_PROGRAM_ID
@@ -62,8 +93,7 @@ export const routerDecoderInstructionsData = (type: string, programId: string, i
                 return meteoraDecoder(type, programId, instruction);
             // PROGRAM_JUPITER_V6
             case "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4":
-                return jupiterDecoder(type, programId, instruction);
-            //     return pumpswapDecoder(programId, instruction);
+                return jupiterDecoder(instruction);
             default:
                 return null;
         }
@@ -123,7 +153,7 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
         const dataDecoded = decodeBase64Data(accountInfo.value.data[0]);
         const poolKeys = poolKeysSchema.decode(dataDecoded);
 
-        return{
+        return {
             programId,
             signature: tx.transaction.signatures[0],
             timestamp: serializedBigInt(tx.blockTime),
@@ -173,12 +203,13 @@ export const extractSwapData = async (programId: string, decoded: any, tx: any) 
     return null;
 };
 
-export const decodeTxData = async (tx: any) => {
+export const decodeTxData = async (tx: HeliusTransaction): Promise<TxDecodeResult | undefined> => {
+
     // Guard: vérifier que la transaction a la structure minimale requise
-    if (!tx || !tx.transaction || !tx.transaction.message) {
+    if (!tx || !tx.signature || !tx.blockTime) {
         // Retourner une structure vide pour les transactions invalides (skip silencieusement)
         return {
-            signature: [],
+            signature: '',
             recentBlockhash: '',
             blockTime: 0,
             fee: 0,
@@ -204,82 +235,90 @@ export const decodeTxData = async (tx: any) => {
             successfullyDecoded: 0
         };
     }
+    const heliusService = createHeliusService(process.env.HELIUS_API_KEY || '', 10);
+    try {
+        const transactionInfo = await heliusService.getTransaction(tx.signature);
 
-    // Extraire les balances avec le nouveau module
-    const balanceAnalysis = await extractBalances(tx);
-    const instructions = tx.transaction.message.instructions;
-    const innerInstructions = tx.meta.innerInstructions;
-    const accounts = [
-        ...tx.transaction.message.accountKeys,
-        ...(tx.meta?.loadedAddresses?.writable ?? []),
-        ...(tx.meta?.loadedAddresses?.readonly ?? [])
-    ];
-    const decodedInstructions: any[] = [];
-    const parsed: any[] = [];
+        // Extraire les balances avec le nouveau module
+        const balanceAnalysis = await extractBalances(transactionInfo);
+        const instructions: SolanaInstruction[] = transactionInfo.transaction.message.instructions;
+        const innerInstructions: InnerInstruction[] | undefined = transactionInfo.meta.innerInstructions;
+        
+        const accounts: string[] = [
+            ...transactionInfo.transaction.message.accountKeys,
+            ...(transactionInfo.meta?.loadedAddresses?.writable ?? []),
+            ...(transactionInfo.meta?.loadedAddresses?.readonly ?? [])
+        ];
+        const decodedInstructions: any[] = [];
+        const parsed: any[] = [];
 
-    // Process main instructions
-    for (const instruction of instructions) {
-        try {
-            const programId = accounts[instruction.programIdIndex];
-            const decoded = routerDecoderInstructionsData('instruction', programId, instruction);
+        // Process main instructions
+        for (const instruction of instructions) {
+            try {
+                const programId = accounts[instruction.programIdIndex];
+                const decoded = routerDecoderInstructionsData('instruction', programId, instruction);
 
-            if (decoded) {
-                decodedInstructions.push({
-                    programId,
-                    type: "main",
-                    instruction,
-                    decoded
-                });
-                // Si c’est un swap Jupiter, Pumpfun, Orca, etc.
-                const swap = await extractSwapData(programId, decoded, tx);
-                if (swap) parsed.push(swap);
+                if (decoded) {
+                    decodedInstructions.push({
+                        programId,
+                        type: "main",
+                        instruction,
+                        decoded
+                    });
+                    // Si c’est un swap Jupiter, Pumpfun, Orca, etc.
+                    const swap = await extractSwapData(programId, decoded, transactionInfo);
+                    if (swap) parsed.push(swap);
+                }
+            } catch (error) {
+                console.log("Error processing instruction:", error instanceof Error ? error.message : String(error));
             }
-        } catch (error) {
-            console.log("Error processing instruction:", error instanceof Error ? error.message : String(error));
         }
-    }
 
-    // Process inner instructions
-    if (innerInstructions) {
-        for (const innerInst of innerInstructions) {
-            for (const instruction of innerInst.instructions) {
-                try {
-                    const programId = accounts[instruction.programIdIndex];
-                    const decoded = routerDecoderInstructionsData('instruction', programId, instruction);
+        // Process inner instructions
+        if (innerInstructions) {
+            for (const innerInst of innerInstructions) {
+                for (const instruction of innerInst.instructions) {
+                    try {
+                        const programId = accounts[instruction.programIdIndex];
+                        const decoded = routerDecoderInstructionsData('instruction', programId, instruction);
 
-                    if (decoded) {
-                        decodedInstructions.push({
-                            programId,
-                            type: "inner",
-                            instruction,
-                            decoded
-                        });
-                        const swap = await extractSwapData(programId, decoded, tx);
-                        if (swap) parsed.push(swap);
+                        if (decoded) {
+                            decodedInstructions.push({
+                                programId,
+                                type: "inner",
+                                instruction,
+                                decoded
+                            });
+                            const swap = await extractSwapData(programId, decoded, transactionInfo);
+                            if (swap) parsed.push(swap);
+                        }
+                    } catch (error) {
+                        console.log("Error processing inner instruction:", error instanceof Error ? error.message : String(error));
                     }
-                } catch (error) {
-                    console.log("Error processing inner instruction:", error instanceof Error ? error.message : String(error));
                 }
             }
         }
-    }
 
-    return {
-        signature: tx.transaction.signatures,
-        recentBlockhash: tx.transaction.recentBlockhash,
-        blockTime: serializedBigInt(tx.blockTime),
-        fee: tx.transaction.fee,
-        error: tx.meta.err ? 'FAILED' : 'SUCCESS',
-        status: tx.meta.status,
-        accounts: accounts,
-        decodedInstructions,
-        parsed,
-        balances: balanceAnalysis,
-        totalInstructions: instructions.length,
-        totalAccountsKeys: tx.transaction.message.accountKeys.length,
-        totalWritableKeys: tx.meta?.loadedAddresses?.writable.length,
-        totalReadonlyKeys: tx.meta?.loadedAddresses?.readonly.length,
-        totalInnerInstructions: innerInstructions ? innerInstructions.reduce((sum: number, inst: any) => sum + inst.instructions.length, 0) : 0,
-        successfullyDecoded: decodedInstructions.length
+        return {
+            signature: transactionInfo.transaction.signatures,
+            recentBlockhash: transactionInfo.transaction.recentBlockhash,
+            blockTime: serializedBigInt(transactionInfo.blockTime),
+            fee: transactionInfo.transaction.fee,
+            error: transactionInfo.meta.err ? 'FAILED' : 'SUCCESS',
+            status: transactionInfo.meta.status,
+            accounts: accounts,
+            decodedInstructions,
+            parsed,
+            balances: balanceAnalysis,
+            totalInstructions: instructions.length,
+            totalAccountsKeys: transactionInfo.transaction.message.accountKeys.length,
+            totalWritableKeys: transactionInfo.meta?.loadedAddresses?.writable.length,
+            totalReadonlyKeys: transactionInfo.meta?.loadedAddresses?.readonly.length,
+            totalInnerInstructions: innerInstructions ? innerInstructions.reduce((sum: number, inst: InnerInstruction) => sum + inst.instructions.length, 0) : 0,
+            successfullyDecoded: decodedInstructions.length
+        }
+    } catch (error) {
+        console.log("Error getting transaction info:", error instanceof Error ? error.message : String(error));
+        return undefined;
     }
 }

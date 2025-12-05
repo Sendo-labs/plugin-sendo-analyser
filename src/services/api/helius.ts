@@ -1,16 +1,27 @@
+import type { Address } from '@solana/addresses';
+import type { Signature } from '@solana/keys';
 import { createHelius } from "helius-sdk";
-import { RateLimiter } from "../../utils/rateLimiter.js";
+import { RateLimiter } from "../../utils/rateLimiter";
+
+export interface HeliusTransaction {
+  signature: string;
+  slot: number;
+  blockTime: number;
+  error: string;
+  memo: string;
+  confirmationStatus: "finalized" | "confirmed" | "processed";
+}
 
 export interface HeliusService {
   getAccountInfo(address: string, config?: any): Promise<any>;
-  getBlock(address: string): Promise<any>;
+  getBlock(slot: bigint): Promise<any>;
   getSignaturesForAddress(address: string, config: any): Promise<readonly any[]>;
   getAssetsByOwner(config: { ownerAddress: string }): Promise<any>;
   getTokenAccounts(config: { owner: string }): Promise<any>;
   getBalance(address: string): Promise<any>;
   getTransaction(signature: string, config?: any): Promise<any>;
   getTransactionsForAddress(address: string, limit: number, before?: string): Promise<{
-    transactions: any[];
+    transactions: HeliusTransaction[];
     signatures: string[];
     paginationToken?: string;
     hasMore: boolean;
@@ -42,19 +53,19 @@ export function createHeliusService(apiKey: string, requestsPerSecond: number = 
   return {
     getAccountInfo: async (address: string, config?: any) => {
       return withRateLimit(async () => {
-        return helius.getAccountInfo(address, config || { encoding: "base64" });
+        return helius.getAccountInfo(address as Address, config || { encoding: "base64" });
       });
     },
 
-    getBlock: async (address: string) => {
+    getBlock: async (slot: bigint) => {
       return withRateLimit(async () => {
-        return helius.getBlock(address);
+        return helius.getBlock(slot);
       });
     },
 
     getSignaturesForAddress: async (address: string, config: any) => {
       return withRateLimit(async () => {
-        return helius.getSignaturesForAddress(address, config);
+        return helius.getSignaturesForAddress(address as Address, config);
       });
     },
 
@@ -70,26 +81,36 @@ export function createHeliusService(apiKey: string, requestsPerSecond: number = 
       });
     },
 
-    getBalance: async (address: string) => {
+    getBalance: async (address: string): Promise<any> => {
       return withRateLimit(async () => {
-        return helius.getBalance(address);
+        return helius.getBalance(address as Address);
       });
     },
 
-    getTransaction: async (signature: string, config?: any) => {
+    getTransaction: async (signature: Signature, config?: any) => {
       return withRateLimit(async () => {
         return helius.getTransaction(signature, config || { maxSupportedTransactionVersion: 0 });
       });
     },
 
-    getTransactionsForAddress: async (address: string, limit: number, before?: string) => {
+    /**
+     * Fetches transactions for a given address using Helius's optimized RPC method
+     * This method combines getSignaturesForAddress + getTransaction in a single call,
+     * significantly reducing API calls and improving performance
+     * 
+     * @param address - The Solana address to fetch transactions for
+     * @param limit - Maximum number of transactions to return (max 100 with full details)
+     * @param before - Optional pagination token from previous request
+     * @returns Object containing transactions, signatures, pagination token, and hasMore flag
+     */
+    getTransactionsForAddress: async (address: string, limit: number, before?: string) :Promise<{ transactions: HeliusTransaction[]; signatures: string[]; paginationToken?: string; hasMore: boolean }> => {
       // Use new Helius getTransactionsForAddress RPC method
       // This combines getSignaturesForAddress + getTransaction in 1 call!
       // Limit: max 100 transactions with full details
 
       return withRateLimit(async () => {
         const params: any = {
-          transactionDetails: 'full',  // Get full transaction data
+          transactionDetails: 'signatures',  // Get full transaction data
           limit: Math.min(limit, 100), // Max 100 with full details
         };
 
@@ -122,24 +143,27 @@ export function createHeliusService(apiKey: string, requestsPerSecond: number = 
         }
 
         // Filter out failed transactions
-        const validTransactions = result.data.filter((tx: any) =>
+        const validTransactions: HeliusTransaction[] = result.data.filter((tx: any) =>
           tx.meta?.err === null || tx.meta?.err === undefined
         );
-
         return {
           transactions: validTransactions,
-          signatures: validTransactions.map((tx: any) => tx.transaction.signatures[0]),
+          signatures: validTransactions.map((tx: HeliusTransaction) => Array.isArray(tx.signature) ? tx.signature[0] : tx.signature),
           paginationToken: result.paginationToken || undefined,
           hasMore: !!result.paginationToken
         };
       });
     },
 
+    /**
+     * Fetches token metadata (symbol and name) for multiple tokens in batch
+     * Uses Helius DAS API getAssetBatch which is much more efficient than
+     * calling external APIs (like Birdeye) for each token individually
+     * 
+     * @param mints - Array of token mint addresses to fetch metadata for
+     * @returns Map of mint address to metadata object containing symbol and name
+     */
     getTokenMetadataBatch: async (mints: string[]) => {
-      // Use Helius DAS API getAssetBatch to fetch metadata for multiple tokens
-      // This is MUCH more efficient than calling Birdeye token_overview for each token
-      // Limit: up to 1000 tokens per request
-
       return withRateLimit(async () => {
         const metadataMap = new Map<string, { symbol: string | null; name: string | null }>();
 
