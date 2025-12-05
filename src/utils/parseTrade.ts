@@ -1,6 +1,134 @@
-import { decodeTxData } from './decoder/index.js';
-import { getSignerTrades } from './decoder/extractBalances.js';
-import type { BirdeyeService } from '../services/api/birdeyes.js';
+import { decodeTxData, TxDecodeResult } from './decoder';
+import { getSignerTrades, TokenBalance, SolBalance } from './decoder/extractBalances';
+import type { BirdeyeService } from '../services/api/birdeyes';
+
+/**
+ * On déduplique par token+timestamp (arrondi à l'heure) pour éviter les appels dupliqués
+ */
+interface TradeWithTimestamp {
+    mint: string;
+    timestamp: number;
+    tx: any;
+    trade: any;
+}
+
+/**
+ * Price analysis data for a trade
+ */
+export interface TradePriceAnalysis {
+    purchasePrice: number;
+    currentPrice: number;
+    athPrice: number;
+    athTimestamp: number;
+    priceHistoryPoints: number;
+}
+
+/**
+ * Parsed trade data with price analysis
+ */
+export interface ParsedTrade {
+    mint: string;
+    tokenBalance: TokenBalance;
+    tradeType: 'increase' | 'decrease' | 'no_change';
+    priceAnalysis: TradePriceAnalysis | null;
+    tokenSymbol: string | undefined;
+    volume: number;
+    missedATH: number;
+    gainLoss: number;
+}
+
+/**
+ * Parsed transaction with trades and balances
+ */
+export interface ParsedTransaction {
+    signature: string[];
+    recentBlockhash: string;
+    blockTime: number;
+    fee: any;
+    error: string;
+    status: any;
+    accounts: any[];
+    balances: {
+        signerAddress: string;
+        solBalance: SolBalance | null;
+        tokenBalances: TokenBalance[];
+    };
+    trades: ParsedTrade[];
+}
+
+/**
+ * Trade summary for best/worst trade
+ */
+interface TradeSummary {
+    mint: string;
+    gainLoss: string;
+    gainLossUSD: string;
+    gainLossSOL: string;
+    signature: string;
+    blockTime: number;
+}
+
+/**
+ * Token summary data
+ */
+interface TokenSummary {
+    mint: string;
+    trades: number;
+    totalTokensTraded: number;
+    totalVolumeUSD: number;
+    totalGainLoss: number;
+    totalMissedATH: number;
+    bestGainLoss: number;
+    worstGainLoss: number;
+    totalPurchasePrice: number;
+    totalAthPrice: number;
+    averageGainLoss: number;
+    averageMissedATH: number;
+    averageVolumeUSD: number;
+    averagePurchasePrice: number;
+    averageAthPrice: number;
+}
+
+/**
+ * Global summary result
+ */
+export interface GlobalSummary {
+    overview: {
+        totalTransactions: number;
+        totalTrades: number;
+        uniqueTokens: number;
+        profitableTrades: number;
+        losingTrades: number;
+        winRate: string;
+        purchases: number;
+        sales: number;
+        noChange: number;
+    };
+    volume: {
+        totalTokensTraded: string;
+        totalVolumeUSD: string;
+        totalVolumeSOL: string;
+        averageTradeSizeUSD: string;
+    };
+    performance: {
+        totalGainLoss: string;
+        averageGainLoss: string;
+        totalMissedATH: string;
+        averageMissedATH: string;
+    };
+    bestTrade: TradeSummary | null;
+    worstTrade: TradeSummary | null;
+    tokens: TokenSummary[];
+}
+
+export interface HeliusTransaction {
+    signature: string;
+    slot: number;
+    blockTime: number;
+    error: string;
+    memo: string;
+    confirmationStatus: "finalized" | "confirmed" | "processed";
+  }
 
 /**
  * Cache simple pour éviter les appels BirdEye dupliqués
@@ -18,14 +146,14 @@ const priceAnalysisCache = new Map<string, any>();
  * @param birdeyeService Birdeye service instance for price analysis
  * @returns Array of parsed transactions with trades and price analysis
  */
-export const parseTransactionsWithPriceAnalysis = async (transactions: any[], birdeyeService: BirdeyeService) => {
+export const parseTransactionsWithPriceAnalysis = async (transactions: HeliusTransaction[], birdeyeService: BirdeyeService): Promise<ParsedTransaction[]> => {
     // ÉTAPE 1: Parser toutes les transactions en parallèle
     const parsedTxsResults = await Promise.all(
         transactions.map(async (transaction) => {
             try {
                 const tx = await decodeTxData(transaction);
 
-                if (tx.error === 'SUCCESS') {
+                if (tx && tx.error === 'SUCCESS') {
                     const signerTrades = getSignerTrades(tx.balances);
                     return {
                         tx,
@@ -42,18 +170,11 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
     );
 
     // Filtrer les résultats null
-    const validParsedTxs = parsedTxsResults.filter((result): result is { tx: any; signerTrades: any[]; hasTrades: boolean } =>
+    const validParsedTxs = parsedTxsResults.filter((result): result is { tx: TxDecodeResult; signerTrades: TokenBalance[]; hasTrades: boolean } =>
         result !== null && result.hasTrades
     );
 
     // ÉTAPE 2: Collecter tous les trades avec leur token et timestamp
-    // On déduplique par token+timestamp (arrondi à l'heure) pour éviter les appels dupliqués
-    interface TradeWithTimestamp {
-        mint: string;
-        timestamp: number;
-        tx: any;
-        trade: any;
-    }
 
     const tradesToAnalyze: TradeWithTimestamp[] = [];
 
@@ -140,11 +261,11 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
     );
 
     // ÉTAPE 6: Construire les transactions parsées avec les analyses de prix
-    const parsedTransactionsArray: any[] = [];
+    const parsedTransactionsArray: ParsedTransaction[] = [];
 
     validParsedTxs.forEach(({ tx, signerTrades }) => {
-        const trades = signerTrades.map((tokenTrade) => {
-            const tradeData: any = {
+        const trades = signerTrades.map((tokenTrade): ParsedTrade => {
+            const tradeData: ParsedTrade = {
                 mint: tokenTrade.mint,
                 tokenBalance: tokenTrade,
                 tradeType: tokenTrade.changeType,
@@ -191,7 +312,7 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
         });
 
         parsedTransactionsArray.push({
-            signature: tx.signature,
+            signature: Array.isArray(tx.signature) ? tx.signature : [tx.signature],
             recentBlockhash: tx.recentBlockhash,
             blockTime: tx.blockTime,
             fee: tx.fee,
@@ -215,7 +336,7 @@ export const parseTransactionsWithPriceAnalysis = async (transactions: any[], bi
  * @param transactions Parsed transactions with trades and price analysis
  * @returns Global summary with overview, volume, performance, best/worst trades, and tokens
  */
-export const calculateGlobalSummary = (transactions: any[]) => {
+export const calculateGlobalSummary = (transactions: ParsedTransaction[]): GlobalSummary => {
     const summary = {
         totalTransactions: transactions.length,
         totalTrades: 0,

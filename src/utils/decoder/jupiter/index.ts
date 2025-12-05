@@ -1,4 +1,4 @@
-import { decodeB58Data, serializedBigInt } from "../index.js";
+import { SolanaInstruction, decodeB58Data } from "../";
 import { routePlanStepSchema, discriminatorSchema, routePlanLengthSchema, fixedFieldsSchema, swapEventSchema, jupiterSwapFixedSchema } from "./schema.js";
 import { getSwapTypeName } from "./swapType.js";
 
@@ -30,10 +30,9 @@ const decodeRoutePlan = (buffer: Buffer, offset: number, length: number) => {
     return steps;
 };
 
-export const jupiterDecoder = (type: string, programId: string, instruction: any) => {
+export const jupiterDecoder = (instruction: SolanaInstruction) => {
     const dataDecoded = decodeB58Data(instruction.data);
     const discriminator = dataDecoded[0];
-    // console.log("jupiter", discriminator);
 
     try {
         switch (discriminator) {

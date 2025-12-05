@@ -4,6 +4,7 @@
  */
 
 import { getSignerTrades, type TokenBalance } from './decoder/extractBalances.js';
+import { TxDecodeResult } from './decoder';
 
 export interface LightweightTrade {
   type: 'buy' | 'sell' | 'swap';
@@ -50,7 +51,7 @@ function convertBalanceToTrade(balance: TokenBalance): LightweightTrade {
  * IMPORTANT: Extracts trades from BALANCE CHANGES, not decoded instructions
  * This ensures we capture ALL trades, even from DEXs we don't have decoders for
  */
-export function extractTrades(parsedTransaction: any): LightweightTrade[] {
+export function extractTrades(parsedTransaction: TxDecodeResult): LightweightTrade[] {
   if (!parsedTransaction || !parsedTransaction.balances) {
     return [];
   }
